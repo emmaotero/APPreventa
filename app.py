@@ -210,6 +210,41 @@ def crear_categoria(nombre, descripcion=""):
         "usuario_id": usuario['id']
     }).execute().data
 
+def actualizar_categoria(id_categoria, datos):
+    return supabase.table("categorias").update(datos).eq("id", id_categoria).execute().data
+
+def eliminar_categoria(id_categoria):
+    return supabase.table("categorias").delete().eq("id", id_categoria).execute().data
+
+def generar_codigo_producto(nombre_producto, categoria_nombre):
+    """Genera código único del producto: PAPHIG-PAP-0001"""
+    usuario = obtener_usuario_actual()
+    if not usuario:
+        return None
+    
+    # Obtener primeras 6 letras del producto (sin espacios, mayúsculas)
+    prod_code = ''.join(nombre_producto.split()).upper()[:6]
+    
+    # Obtener primeras 3 letras de la categoría
+    cat_code = ''.join(categoria_nombre.split()).upper()[:3]
+    
+    # Obtener productos de esa categoría para el contador
+    productos_cat = obtener_productos(activos_solo=False)
+    if not productos_cat.empty:
+        # Filtrar por categoría
+        productos_cat['cat_nombre'] = productos_cat['categorias'].apply(
+            lambda x: x['nombre'] if x else ''
+        )
+        productos_misma_cat = productos_cat[productos_cat['cat_nombre'] == categoria_nombre]
+        contador = len(productos_misma_cat) + 1
+    else:
+        contador = 1
+    
+    # Formato: PAPHIG-PAP-0001
+    codigo = f"{prod_code}-{cat_code}-{contador:04d}"
+    
+    return codigo
+
 # --- PROVEEDORES ---
 def obtener_proveedores():
     usuario = obtener_usuario_actual()
@@ -462,18 +497,33 @@ def pagina_productos():
                 lambda x: x['nombre'] if x else 'Sin proveedor'
             )
             
+            # Mostrar con código y campos adicionales
+            columnas_mostrar = ['codigo', 'nombre', 'marca', 'variedad', 'presentacion', 
+                              'categoria', 'proveedor', 'stock_actual', 'precio_compra', 
+                              'precio_venta', 'margen_porcentaje']
+            
             st.dataframe(
-                productos_display[['nombre', 'categoria', 'proveedor', 'stock_actual', 
-                                  'precio_compra', 'precio_venta', 'margen_porcentaje']],
+                productos_display[columnas_mostrar],
                 use_container_width=True,
-                hide_index=True
+                hide_index=True,
+                column_config={
+                    "codigo": "Código",
+                    "nombre": "Producto",
+                    "marca": "Marca",
+                    "variedad": "Variedad",
+                    "presentacion": "Presentación",
+                    "categoria": "Categoría",
+                    "proveedor": "Proveedor",
+                    "stock_actual": "Stock",
+                    "precio_compra": st.column_config.NumberColumn("P. Compra", format="$%.2f"),
+                    "precio_venta": st.column_config.NumberColumn("P. Venta", format="$%.2f"),
+                    "margen_porcentaje": st.column_config.NumberColumn("Margen %", format="%.1f%%")
+                }
             )
             
             st.download_button(
                 label="📥 Descargar Productos (Excel)",
-                data=to_excel(productos_display[['nombre', 'categoria', 'proveedor', 
-                              'stock_actual', 'precio_compra', 'precio_venta', 'margen_porcentaje']], 
-                              "Productos"),
+                data=to_excel(productos_display[columnas_mostrar], "Productos"),
                 file_name=f"productos_{datetime.now().strftime('%Y%m%d')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
@@ -485,37 +535,69 @@ def pagina_productos():
         proveedores = obtener_proveedores()
         
         with st.form("nuevo_producto"):
-            nombre = st.text_input("Nombre *")
-            categoria_id = st.selectbox(
-                "Categoría",
-                categorias['id'].tolist(),
-                format_func=lambda x: categorias[categorias['id']==x]['nombre'].values[0]
-            ) if not categorias.empty else None
+            st.subheader("Información Básica")
+            col1, col2 = st.columns(2)
             
-            proveedor_id = st.selectbox(
-                "Proveedor",
-                [None] + proveedores['id'].tolist(),
-                format_func=lambda x: "Sin proveedor" if x is None else proveedores[proveedores['id']==x]['nombre'].values[0]
-            ) if not proveedores.empty else None
+            with col1:
+                nombre = st.text_input("Nombre del Producto *")
+                categoria_id = st.selectbox(
+                    "Categoría *",
+                    categorias['id'].tolist(),
+                    format_func=lambda x: categorias[categorias['id']==x]['nombre'].values[0]
+                ) if not categorias.empty else None
+                
+                proveedor_id = st.selectbox(
+                    "Proveedor",
+                    [None] + proveedores['id'].tolist(),
+                    format_func=lambda x: "Sin proveedor" if x is None else proveedores[proveedores['id']==x]['nombre'].values[0]
+                ) if not proveedores.empty else None
             
-            precio_compra = st.number_input("Precio Compra", min_value=0.0, step=0.01)
-            precio_venta = st.number_input("Precio Venta", min_value=0.0, step=0.01)
-            stock_inicial = st.number_input("Stock Inicial", min_value=0, step=1)
+            with col2:
+                marca = st.text_input("Marca")
+                variedad = st.text_input("Variedad")
+                presentacion = st.text_input("Presentación")
             
-            if st.form_submit_button("✅ Crear"):
+            detalle = st.text_area("Detalle / Otro")
+            
+            st.divider()
+            st.subheader("Precios y Stock")
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                precio_compra = st.number_input("Precio Compra *", min_value=0.0, step=0.01)
+            with col2:
+                precio_venta = st.number_input("Precio Venta *", min_value=0.0, step=0.01)
+            with col3:
+                stock_inicial = st.number_input("Stock Inicial", min_value=0, step=1)
+            
+            # Mostrar código que se generará
+            if nombre and categoria_id:
+                cat_nombre = categorias[categorias['id']==categoria_id]['nombre'].values[0]
+                codigo_preview = generar_codigo_producto(nombre, cat_nombre)
+                st.info(f"📋 Código que se asignará: **{codigo_preview}**")
+            
+            if st.form_submit_button("✅ Crear Producto"):
                 if nombre and categoria_id:
+                    cat_nombre = categorias[categorias['id']==categoria_id]['nombre'].values[0]
+                    codigo_generado = generar_codigo_producto(nombre, cat_nombre)
+                    
                     crear_producto({
+                        'codigo': codigo_generado,
                         'nombre': nombre,
                         'categoria_id': categoria_id,
                         'proveedor_id': proveedor_id,
+                        'marca': marca if marca else None,
+                        'variedad': variedad if variedad else None,
+                        'presentacion': presentacion if presentacion else None,
+                        'detalle': detalle if detalle else None,
                         'precio_compra': precio_compra,
                         'precio_venta': precio_venta,
                         'stock_actual': stock_inicial
                     })
-                    st.success(f"✅ Producto '{nombre}' creado")
+                    st.success(f"✅ Producto '{nombre}' creado con código {codigo_generado}")
                     st.rerun()
                 else:
-                    st.error("Completá los campos obligatorios")
+                    st.error("Completá los campos obligatorios (*)")
     
     with tab3:
         productos = obtener_productos(activos_solo=False)
@@ -526,7 +608,7 @@ def pagina_productos():
         producto_seleccionado = st.selectbox(
             "Seleccionar producto",
             productos['id'].tolist(),
-            format_func=lambda x: productos[productos['id']==x]['nombre'].values[0]
+            format_func=lambda x: f"{productos[productos['id']==x]['codigo'].values[0]} - {productos[productos['id']==x]['nombre'].values[0]}"
         )
         
         if producto_seleccionado:
@@ -535,16 +617,76 @@ def pagina_productos():
             col1, col2 = st.columns(2)
             
             with col1:
-                st.subheader("✏️ Editar")
+                st.subheader("✏️ Editar Producto")
+                
+                categorias = obtener_categorias()
+                proveedores = obtener_proveedores()
+                
                 with st.form("editar_producto"):
+                    st.write(f"**Código:** {prod['codigo']}")
+                    
                     nuevo_nombre = st.text_input("Nombre", value=prod['nombre'])
-                    nuevo_precio_compra = st.number_input("Precio Compra", value=float(prod['precio_compra']), step=0.01)
-                    nuevo_precio_venta = st.number_input("Precio Venta", value=float(prod['precio_venta']), step=0.01)
-                    nuevo_stock_minimo = st.number_input("Stock Mínimo", value=int(prod['stock_minimo']), step=1)
+                    
+                    # Categoría editable
+                    if not categorias.empty:
+                        # Encontrar índice de la categoría actual
+                        cat_actual_id = prod['categoria_id']
+                        if cat_actual_id and cat_actual_id in categorias['id'].values:
+                            indice_actual = categorias[categorias['id']==cat_actual_id].index[0]
+                        else:
+                            indice_actual = 0
+                        
+                        nueva_categoria_id = st.selectbox(
+                            "Categoría",
+                            categorias['id'].tolist(),
+                            format_func=lambda x: categorias[categorias['id']==x]['nombre'].values[0],
+                            index=indice_actual
+                        )
+                    else:
+                        nueva_categoria_id = None
+                    
+                    # Proveedor editable
+                    if not proveedores.empty:
+                        prov_actual_id = prod['proveedor_id']
+                        opciones_prov = [None] + proveedores['id'].tolist()
+                        
+                        if prov_actual_id and prov_actual_id in proveedores['id'].values:
+                            indice_prov = opciones_prov.index(prov_actual_id)
+                        else:
+                            indice_prov = 0
+                        
+                        nuevo_proveedor_id = st.selectbox(
+                            "Proveedor",
+                            opciones_prov,
+                            format_func=lambda x: "Sin proveedor" if x is None else proveedores[proveedores['id']==x]['nombre'].values[0],
+                            index=indice_prov
+                        )
+                    else:
+                        nuevo_proveedor_id = None
+                    
+                    nueva_marca = st.text_input("Marca", value=prod['marca'] if prod['marca'] else "")
+                    nueva_variedad = st.text_input("Variedad", value=prod['variedad'] if prod['variedad'] else "")
+                    nueva_presentacion = st.text_input("Presentación", value=prod['presentacion'] if prod['presentacion'] else "")
+                    nuevo_detalle = st.text_area("Detalle", value=prod['detalle'] if prod['detalle'] else "")
+                    
+                    st.divider()
+                    
+                    col_a, col_b = st.columns(2)
+                    with col_a:
+                        nuevo_precio_compra = st.number_input("Precio Compra", value=float(prod['precio_compra']), step=0.01)
+                        nuevo_precio_venta = st.number_input("Precio Venta", value=float(prod['precio_venta']), step=0.01)
+                    with col_b:
+                        nuevo_stock_minimo = st.number_input("Stock Mínimo", value=int(prod['stock_minimo']), step=1)
                     
                     if st.form_submit_button("💾 Guardar Cambios"):
                         actualizar_producto(producto_seleccionado, {
                             'nombre': nuevo_nombre,
+                            'categoria_id': nueva_categoria_id,
+                            'proveedor_id': nuevo_proveedor_id,
+                            'marca': nueva_marca if nueva_marca else None,
+                            'variedad': nueva_variedad if nueva_variedad else None,
+                            'presentacion': nueva_presentacion if nueva_presentacion else None,
+                            'detalle': nuevo_detalle if nuevo_detalle else None,
                             'precio_compra': nuevo_precio_compra,
                             'precio_venta': nuevo_precio_venta,
                             'stock_minimo': nuevo_stock_minimo
@@ -555,6 +697,7 @@ def pagina_productos():
             with col2:
                 st.subheader("🗑️ Eliminar")
                 st.warning(f"**Producto:** {prod['nombre']}")
+                st.write(f"**Código:** {prod['codigo']}")
                 st.write(f"Stock actual: {prod['stock_actual']}")
                 
                 if st.button("🗑️ Eliminar Producto", type="secondary"):
@@ -910,26 +1053,70 @@ def pagina_proveedores():
                         st.rerun()
     
     with tab2:
-        categorias = obtener_categorias()
-        if not categorias.empty:
-            st.dataframe(
-                categorias[['nombre', 'descripcion']], 
-                use_container_width=True, 
-                hide_index=True
-            )
-        else:
-            st.info("No hay categorías registradas")
+        subtab1, subtab2, subtab3 = st.tabs(["📋 Lista", "➕ Nueva", "✏️ Editar/Eliminar"])
         
-        st.divider()
-        with st.form("nueva_categoria"):
-            nombre = st.text_input("Nombre")
-            descripcion = st.text_area("Descripción")
+        with subtab1:
+            categorias = obtener_categorias()
+            if not categorias.empty:
+                st.dataframe(
+                    categorias[['nombre', 'descripcion']], 
+                    use_container_width=True, 
+                    hide_index=True
+                )
+            else:
+                st.info("No hay categorías registradas")
+        
+        with subtab2:
+            with st.form("nueva_categoria"):
+                nombre = st.text_input("Nombre")
+                descripcion = st.text_area("Descripción")
+                
+                if st.form_submit_button("✅ Crear"):
+                    if nombre:
+                        crear_categoria(nombre, descripcion)
+                        st.success("✅ Categoría creada")
+                        st.rerun()
+        
+        with subtab3:
+            categorias = obtener_categorias()
+            if categorias.empty:
+                st.info("No hay categorías")
+                return
             
-            if st.form_submit_button("✅ Crear"):
-                if nombre:
-                    crear_categoria(nombre, descripcion)
-                    st.success("✅ Categoría creada")
-                    st.rerun()
+            cat_seleccionada = st.selectbox(
+                "Seleccionar categoría",
+                categorias['id'].tolist(),
+                format_func=lambda x: categorias[categorias['id']==x]['nombre'].values[0],
+                key="select_cat"
+            )
+            
+            if cat_seleccionada:
+                cat = categorias[categorias['id']==cat_seleccionada].iloc[0]
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.subheader("✏️ Editar")
+                    with st.form("editar_categoria"):
+                        nuevo_nombre = st.text_input("Nombre", value=cat['nombre'])
+                        nueva_descripcion = st.text_area("Descripción", value=cat['descripcion'] if cat['descripcion'] else "")
+                        
+                        if st.form_submit_button("💾 Guardar"):
+                            actualizar_categoria(cat_seleccionada, {
+                                'nombre': nuevo_nombre,
+                                'descripcion': nueva_descripcion
+                            })
+                            st.success("✅ Categoría actualizada")
+                            st.rerun()
+                
+                with col2:
+                    st.subheader("🗑️ Eliminar")
+                    st.warning(f"**{cat['nombre']}**")
+                    st.write(f"{cat['descripcion']}")
+                    if st.button("🗑️ Eliminar Categoría", key="del_cat"):
+                        eliminar_categoria(cat_seleccionada)
+                        st.success("✅ Categoría eliminada")
+                        st.rerun()
 
 # ============================================
 # NAVEGACIÓN PRINCIPAL
