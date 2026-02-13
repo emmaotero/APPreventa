@@ -600,7 +600,7 @@ def pagina_productos():
                     st.error("Completá los campos obligatorios (*)")
     
     with tab3:
-        productos = obtener_productos(activos_solo=False)
+        productos = obtener_productos(activos_solo=True)  # Solo productos activos
         if productos.empty:
             st.info("No hay productos para editar")
             return
@@ -631,9 +631,14 @@ def pagina_productos():
                     if not categorias.empty:
                         # Encontrar índice de la categoría actual
                         cat_actual_id = prod['categoria_id']
-                        if cat_actual_id and cat_actual_id in categorias['id'].values:
-                            indice_actual = categorias[categorias['id']==cat_actual_id].index[0]
-                        else:
+                        try:
+                            if cat_actual_id and cat_actual_id in categorias['id'].values:
+                                # Convertir a lista para usar .index()
+                                lista_ids = categorias['id'].tolist()
+                                indice_actual = lista_ids.index(cat_actual_id)
+                            else:
+                                indice_actual = 0
+                        except:
                             indice_actual = 0
                         
                         nueva_categoria_id = st.selectbox(
@@ -650,9 +655,12 @@ def pagina_productos():
                         prov_actual_id = prod['proveedor_id']
                         opciones_prov = [None] + proveedores['id'].tolist()
                         
-                        if prov_actual_id and prov_actual_id in proveedores['id'].values:
-                            indice_prov = opciones_prov.index(prov_actual_id)
-                        else:
+                        try:
+                            if prov_actual_id and prov_actual_id in proveedores['id'].values:
+                                indice_prov = opciones_prov.index(prov_actual_id)
+                            else:
+                                indice_prov = 0
+                        except:
                             indice_prov = 0
                         
                         nuevo_proveedor_id = st.selectbox(
