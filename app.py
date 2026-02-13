@@ -687,18 +687,39 @@ def pagina_productos():
                         nuevo_stock_minimo = st.number_input("Stock Mínimo", value=int(prod['stock_minimo']), step=1)
                     
                     if st.form_submit_button("💾 Guardar Cambios"):
-                        actualizar_producto(producto_seleccionado, {
-                            'nombre': nuevo_nombre,
-                            'categoria_id': nueva_categoria_id,
-                            'proveedor_id': nuevo_proveedor_id,
-                            'marca': nueva_marca if nueva_marca else None,
-                            'variedad': nueva_variedad if nueva_variedad else None,
-                            'presentacion': nueva_presentacion if nueva_presentacion else None,
-                            'detalle': nuevo_detalle if nuevo_detalle else None,
-                            'precio_compra': nuevo_precio_compra,
-                            'precio_venta': nuevo_precio_venta,
-                            'stock_minimo': nuevo_stock_minimo
-                        })
+                        # Si cambió la categoría, regenerar el código
+                        if nueva_categoria_id != prod['categoria_id']:
+                            cat_nueva_nombre = categorias[categorias['id']==nueva_categoria_id]['nombre'].values[0]
+                            nuevo_codigo = generar_codigo_producto(nuevo_nombre, cat_nueva_nombre)
+                            st.info(f"La categoría cambió. Nuevo código: {nuevo_codigo}")
+                            
+                            actualizar_producto(producto_seleccionado, {
+                                'codigo': nuevo_codigo,
+                                'nombre': nuevo_nombre,
+                                'categoria_id': nueva_categoria_id,
+                                'proveedor_id': nuevo_proveedor_id,
+                                'marca': nueva_marca if nueva_marca else None,
+                                'variedad': nueva_variedad if nueva_variedad else None,
+                                'presentacion': nueva_presentacion if nueva_presentacion else None,
+                                'detalle': nuevo_detalle if nuevo_detalle else None,
+                                'precio_compra': nuevo_precio_compra,
+                                'precio_venta': nuevo_precio_venta,
+                                'stock_minimo': nuevo_stock_minimo
+                            })
+                        else:
+                            actualizar_producto(producto_seleccionado, {
+                                'nombre': nuevo_nombre,
+                                'categoria_id': nueva_categoria_id,
+                                'proveedor_id': nuevo_proveedor_id,
+                                'marca': nueva_marca if nueva_marca else None,
+                                'variedad': nueva_variedad if nueva_variedad else None,
+                                'presentacion': nueva_presentacion if nueva_presentacion else None,
+                                'detalle': nuevo_detalle if nuevo_detalle else None,
+                                'precio_compra': nuevo_precio_compra,
+                                'precio_venta': nuevo_precio_venta,
+                                'stock_minimo': nuevo_stock_minimo
+                            })
+                        
                         st.success("✅ Producto actualizado")
                         st.rerun()
             
@@ -985,146 +1006,148 @@ def pagina_costos_fijos():
                     st.rerun()
 
 def pagina_proveedores():
-    st.title("👥 Proveedores y Categorías")
-    tab1, tab2 = st.tabs(["Proveedores", "Categorías"])
+    st.title("👥 Proveedores")
+    
+    tab1, tab2, tab3 = st.tabs(["📋 Lista", "➕ Nuevo", "✏️ Editar/Eliminar"])
     
     with tab1:
-        subtab1, subtab2, subtab3 = st.tabs(["📋 Lista", "➕ Nuevo", "✏️ Editar/Eliminar"])
-        
-        with subtab1:
-            proveedores = obtener_proveedores()
-            if not proveedores.empty:
-                st.dataframe(
-                    proveedores[['nombre', 'contacto', 'telefono']], 
-                    use_container_width=True, 
-                    hide_index=True
-                )
-            else:
-                st.info("No hay proveedores registrados")
-        
-        with subtab2:
-            with st.form("nuevo_proveedor"):
-                nombre = st.text_input("Nombre")
-                contacto = st.text_input("Contacto")
-                telefono = st.text_input("Teléfono")
-                
-                if st.form_submit_button("✅ Crear"):
-                    if nombre:
-                        crear_proveedor({
-                            'nombre': nombre,
-                            'contacto': contacto,
-                            'telefono': telefono
-                        })
-                        st.success("✅ Proveedor creado")
-                        st.rerun()
-        
-        with subtab3:
-            proveedores = obtener_proveedores()
-            if proveedores.empty:
-                st.info("No hay proveedores")
-                return
-            
-            prov_seleccionado = st.selectbox(
-                "Seleccionar proveedor",
-                proveedores['id'].tolist(),
-                format_func=lambda x: proveedores[proveedores['id']==x]['nombre'].values[0],
-                key="select_prov"
+        proveedores = obtener_proveedores()
+        if not proveedores.empty:
+            st.dataframe(
+                proveedores[['nombre', 'contacto', 'telefono']], 
+                use_container_width=True, 
+                hide_index=True
             )
-            
-            if prov_seleccionado:
-                prov = proveedores[proveedores['id']==prov_seleccionado].iloc[0]
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.subheader("✏️ Editar")
-                    with st.form("editar_proveedor"):
-                        nuevo_nombre = st.text_input("Nombre", value=prov['nombre'])
-                        nuevo_contacto = st.text_input("Contacto", value=prov['contacto'] if prov['contacto'] else "")
-                        nuevo_telefono = st.text_input("Teléfono", value=prov['telefono'] if prov['telefono'] else "")
-                        
-                        if st.form_submit_button("💾 Guardar"):
-                            actualizar_proveedor(prov_seleccionado, {
-                                'nombre': nuevo_nombre,
-                                'contacto': nuevo_contacto,
-                                'telefono': nuevo_telefono
-                            })
-                            st.success("✅ Proveedor actualizado")
-                            st.rerun()
-                
-                with col2:
-                    st.subheader("🗑️ Eliminar")
-                    st.warning(f"**{prov['nombre']}**")
-                    if st.button("🗑️ Eliminar Proveedor", key="del_prov"):
-                        eliminar_proveedor(prov_seleccionado)
-                        st.success("✅ Proveedor eliminado")
-                        st.rerun()
+        else:
+            st.info("No hay proveedores registrados")
     
     with tab2:
-        subtab1, subtab2, subtab3 = st.tabs(["📋 Lista", "➕ Nueva", "✏️ Editar/Eliminar"])
-        
-        with subtab1:
-            categorias = obtener_categorias()
-            if not categorias.empty:
-                st.dataframe(
-                    categorias[['nombre', 'descripcion']], 
-                    use_container_width=True, 
-                    hide_index=True
-                )
-            else:
-                st.info("No hay categorías registradas")
-        
-        with subtab2:
-            with st.form("nueva_categoria"):
-                nombre = st.text_input("Nombre")
-                descripcion = st.text_area("Descripción")
-                
-                if st.form_submit_button("✅ Crear"):
-                    if nombre:
-                        crear_categoria(nombre, descripcion)
-                        st.success("✅ Categoría creada")
-                        st.rerun()
-        
-        with subtab3:
-            categorias = obtener_categorias()
-            if categorias.empty:
-                st.info("No hay categorías")
-                return
+        with st.form("nuevo_proveedor"):
+            nombre = st.text_input("Nombre")
+            contacto = st.text_input("Contacto")
+            telefono = st.text_input("Teléfono")
             
-            cat_seleccionada = st.selectbox(
-                "Seleccionar categoría",
-                categorias['id'].tolist(),
-                format_func=lambda x: categorias[categorias['id']==x]['nombre'].values[0],
-                key="select_cat"
+            if st.form_submit_button("✅ Crear"):
+                if nombre:
+                    crear_proveedor({
+                        'nombre': nombre,
+                        'contacto': contacto,
+                        'telefono': telefono
+                    })
+                    st.success("✅ Proveedor creado")
+                    st.rerun()
+    
+    with tab3:
+        proveedores = obtener_proveedores()
+        if proveedores.empty:
+            st.info("No hay proveedores")
+            return
+        
+        prov_seleccionado = st.selectbox(
+            "Seleccionar proveedor",
+            proveedores['id'].tolist(),
+            format_func=lambda x: proveedores[proveedores['id']==x]['nombre'].values[0],
+            key="select_prov"
+        )
+        
+        if prov_seleccionado:
+            prov = proveedores[proveedores['id']==prov_seleccionado].iloc[0]
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.subheader("✏️ Editar")
+                with st.form("editar_proveedor"):
+                    nuevo_nombre = st.text_input("Nombre", value=prov['nombre'])
+                    nuevo_contacto = st.text_input("Contacto", value=prov['contacto'] if prov['contacto'] else "")
+                    nuevo_telefono = st.text_input("Teléfono", value=prov['telefono'] if prov['telefono'] else "")
+                    
+                    if st.form_submit_button("💾 Guardar"):
+                        actualizar_proveedor(prov_seleccionado, {
+                            'nombre': nuevo_nombre,
+                            'contacto': nuevo_contacto,
+                            'telefono': nuevo_telefono
+                        })
+                        st.success("✅ Proveedor actualizado")
+                        st.rerun()
+            
+            with col2:
+                st.subheader("🗑️ Eliminar")
+                st.warning(f"**{prov['nombre']}**")
+                if st.button("🗑️ Eliminar Proveedor", key="del_prov"):
+                    eliminar_proveedor(prov_seleccionado)
+                    st.success("✅ Proveedor eliminado")
+                    st.rerun()
+
+def pagina_categorias():
+    st.title("🏷️ Categorías")
+    
+    tab1, tab2, tab3 = st.tabs(["📋 Lista", "➕ Nueva", "✏️ Editar/Eliminar"])
+    
+    with tab1:
+        categorias = obtener_categorias()
+        if not categorias.empty:
+            st.dataframe(
+                categorias[['nombre', 'descripcion']], 
+                use_container_width=True, 
+                hide_index=True
             )
+        else:
+            st.info("No hay categorías registradas")
+    
+    with tab2:
+        with st.form("nueva_categoria"):
+            nombre = st.text_input("Nombre *")
+            descripcion = st.text_area("Descripción")
             
-            if cat_seleccionada:
-                cat = categorias[categorias['id']==cat_seleccionada].iloc[0]
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.subheader("✏️ Editar")
-                    with st.form("editar_categoria"):
-                        nuevo_nombre = st.text_input("Nombre", value=cat['nombre'])
-                        nueva_descripcion = st.text_area("Descripción", value=cat['descripcion'] if cat['descripcion'] else "")
-                        
-                        if st.form_submit_button("💾 Guardar"):
-                            actualizar_categoria(cat_seleccionada, {
-                                'nombre': nuevo_nombre,
-                                'descripcion': nueva_descripcion
-                            })
-                            st.success("✅ Categoría actualizada")
-                            st.rerun()
-                
-                with col2:
-                    st.subheader("🗑️ Eliminar")
-                    st.warning(f"**{cat['nombre']}**")
-                    st.write(f"{cat['descripcion']}")
-                    if st.button("🗑️ Eliminar Categoría", key="del_cat"):
-                        eliminar_categoria(cat_seleccionada)
-                        st.success("✅ Categoría eliminada")
+            if st.form_submit_button("✅ Crear Categoría"):
+                if nombre:
+                    crear_categoria(nombre, descripcion)
+                    st.success(f"✅ Categoría '{nombre}' creada")
+                    st.rerun()
+                else:
+                    st.error("El nombre es obligatorio")
+    
+    with tab3:
+        categorias = obtener_categorias()
+        if categorias.empty:
+            st.info("No hay categorías")
+            return
+        
+        cat_seleccionada = st.selectbox(
+            "Seleccionar categoría",
+            categorias['id'].tolist(),
+            format_func=lambda x: categorias[categorias['id']==x]['nombre'].values[0],
+            key="select_cat"
+        )
+        
+        if cat_seleccionada:
+            cat = categorias[categorias['id']==cat_seleccionada].iloc[0]
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.subheader("✏️ Editar")
+                with st.form("editar_categoria"):
+                    nuevo_nombre = st.text_input("Nombre", value=cat['nombre'])
+                    nueva_descripcion = st.text_area("Descripción", value=cat['descripcion'] if cat['descripcion'] else "")
+                    
+                    if st.form_submit_button("💾 Guardar"):
+                        actualizar_categoria(cat_seleccionada, {
+                            'nombre': nuevo_nombre,
+                            'descripcion': nueva_descripcion
+                        })
+                        st.success("✅ Categoría actualizada")
                         st.rerun()
+            
+            with col2:
+                st.subheader("🗑️ Eliminar")
+                st.warning(f"**{cat['nombre']}**")
+                st.write(f"{cat['descripcion']}")
+                if st.button("🗑️ Eliminar Categoría", key="del_cat"):
+                    eliminar_categoria(cat_seleccionada)
+                    st.success("✅ Categoría eliminada")
+                    st.rerun()
 
 # ============================================
 # NAVEGACIÓN PRINCIPAL
@@ -1146,7 +1169,7 @@ def main():
         
         pagina = st.radio(
             "Navegación",
-            ["📊 Dashboard", "📦 Productos", "🛒 Compras", "💰 Ventas", "💸 Costos Fijos", "👥 Proveedores"],
+            ["📊 Dashboard", "📦 Productos", "🛒 Compras", "💰 Ventas", "💸 Costos Fijos", "👥 Proveedores", "🏷️ Categorías"],
             label_visibility="collapsed"
         )
         
@@ -1169,6 +1192,8 @@ def main():
         pagina_costos_fijos()
     elif pagina == "👥 Proveedores":
         pagina_proveedores()
+    elif pagina == "🏷️ Categorías":
+        pagina_categorias()
 
 if __name__ == "__main__":
     main()
