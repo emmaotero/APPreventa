@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import plotly.express as px
 import plotly.graph_objects as go
 from io import BytesIO
+import hashlib
 
 # ============================================
 # CONFIGURACIÓN
@@ -23,6 +24,66 @@ def init_supabase() -> Client:
     return create_client(SUPABASE_URL, SUPABASE_KEY)
 
 supabase = init_supabase()
+
+# ============================================
+# SISTEMA DE AUTENTICACIÓN
+# ============================================
+
+def hash_password(password):
+    """Hashea la contraseña"""
+    return hashlib.sha256(password.encode()).hexdigest()
+
+def login_usuario(email, password):
+    """Verifica credenciales y retorna usuario si es válido"""
+    try:
+        response = supabase.table("usuarios").select("*").eq("email", email).eq("password_hash", hash_password(password)).eq("activo", True).execute()
+        if response.data and len(response.data) > 0:
+            return response.data[0]
+        return None
+    except:
+        return None
+
+def registrar_usuario(email, nombre, password):
+    """Registra un nuevo usuario"""
+    try:
+        nuevo_usuario = {
+            'email': email,
+            'nombre': nombre,
+            'password_hash': hash_password(password)
+        }
+        response = supabase.table("usuarios").insert(nuevo_usuario).execute()
+        
+        # Crear categorías por defecto
+        if response.data:
+            usuario_id = response.data[0]['id']
+            categorias_default = [
+                {'nombre': 'Electrónica', 'usuario_id': usuario_id},
+                {'nombre': 'Ropa', 'usuario_id': usuario_id},
+                {'nombre': 'Hogar', 'usuario_id': usuario_id},
+                {'nombre': 'Otros', 'usuario_id': usuario_id}
+            ]
+            supabase.table("categorias").insert(categorias_default).execute()
+        
+        return response.data[0] if response.data else None
+    except Exception as e:
+        st.error(f"Error al registrar: {str(e)}")
+        return None
+
+def verificar_sesion():
+    """Verifica si hay una sesión activa"""
+    return 'usuario' in st.session_state
+
+def obtener_usuario_actual():
+    """Obtiene el usuario de la sesión actual"""
+    if 'usuario' in st.session_state:
+        return st.session_state.usuario
+    return None
+
+def cerrar_sesion():
+    """Cierra la sesión del usuario"""
+    if 'usuario' in st.session_state:
+        del st.session_state.usuario
+    st.rerun()
 
 # ============================================
 # FUNCIONES DE EXCEL
@@ -45,7 +106,6 @@ def to_excel(df, sheet_name="Datos"):
         
         for col_num, value in enumerate(df.columns.values):
             worksheet.write(0, col_num, value, header_format)
-            # Calcular ancho de columna de forma segura
             col_data = df[value].astype(str)
             if len(col_data) > 0:
                 max_len = max(col_data.apply(len).max(), len(str(value))) + 2
@@ -63,24 +123,38 @@ def formato_moneda(valor):
 # FUNCIONES DE BASE DE DATOS
 # ============================================
 
+# --- PRODUCTOS ---
 def obtener_productos(activos_solo=True):
-    query = supabase.table("productos").select("*, categorias(nombre), proveedores(nombre)")
+    usuario = obtener_usuario_actual()
+    if not usuario:
+        return pd.DataFrame()
+    query = supabase.table("productos").select("*, categorias(nombre), proveedores(nombre)").eq("usuario_id", usuario['id'])
     if activos_solo:
         query = query.eq("activo", True)
     response = query.execute()
     return pd.DataFrame(response.data) if response.data else pd.DataFrame()
 
 def crear_producto(datos):
+    usuario = obtener_usuario_actual()
+    if usuario:
+        datos['usuario_id'] = usuario['id']
     return supabase.table("productos").insert(datos).execute().data
 
 def actualizar_producto(id_producto, datos):
     return supabase.table("productos").update(datos).eq("id", id_producto).execute().data
 
+# --- COMPRAS ---
 def registrar_compra(datos):
+    usuario = obtener_usuario_actual()
+    if usuario:
+        datos['usuario_id'] = usuario['id']
     return supabase.table("compras").insert(datos).execute().data
 
 def obtener_compras(fecha_desde=None, fecha_hasta=None):
-    query = supabase.table("compras").select("*, productos(nombre, codigo), proveedores(nombre)").order("fecha", desc=True)
+    usuario = obtener_usuario_actual()
+    if not usuario:
+        return pd.DataFrame()
+    query = supabase.table("compras").select("*, productos(nombre, codigo), proveedores(nombre)").eq("usuario_id", usuario['id']).order("fecha", desc=True)
     if fecha_desde:
         query = query.gte("fecha", fecha_desde)
     if fecha_hasta:
@@ -88,11 +162,18 @@ def obtener_compras(fecha_desde=None, fecha_hasta=None):
     response = query.execute()
     return pd.DataFrame(response.data) if response.data else pd.DataFrame()
 
+# --- VENTAS ---
 def registrar_venta(datos):
+    usuario = obtener_usuario_actual()
+    if usuario:
+        datos['usuario_id'] = usuario['id']
     return supabase.table("ventas").insert(datos).execute().data
 
 def obtener_ventas(fecha_desde=None, fecha_hasta=None):
-    query = supabase.table("ventas").select("*, productos(nombre, codigo)").order("fecha", desc=True)
+    usuario = obtener_usuario_actual()
+    if not usuario:
+        return pd.DataFrame()
+    query = supabase.table("ventas").select("*, productos(nombre, codigo)").eq("usuario_id", usuario['id']).order("fecha", desc=True)
     if fecha_desde:
         query = query.gte("fecha", fecha_desde)
     if fecha_hasta:
@@ -100,27 +181,107 @@ def obtener_ventas(fecha_desde=None, fecha_hasta=None):
     response = query.execute()
     return pd.DataFrame(response.data) if response.data else pd.DataFrame()
 
+# --- CATEGORÍAS ---
 def obtener_categorias():
-    response = supabase.table("categorias").select("*").execute()
+    usuario = obtener_usuario_actual()
+    if not usuario:
+        return pd.DataFrame()
+    response = supabase.table("categorias").select("*").eq("usuario_id", usuario['id']).execute()
     return pd.DataFrame(response.data) if response.data else pd.DataFrame()
 
 def crear_categoria(nombre, descripcion=""):
-    return supabase.table("categorias").insert({"nombre": nombre, "descripcion": descripcion}).execute().data
+    usuario = obtener_usuario_actual()
+    if not usuario:
+        return None
+    return supabase.table("categorias").insert({
+        "nombre": nombre, 
+        "descripcion": descripcion,
+        "usuario_id": usuario['id']
+    }).execute().data
 
+# --- PROVEEDORES ---
 def obtener_proveedores():
-    response = supabase.table("proveedores").select("*").execute()
+    usuario = obtener_usuario_actual()
+    if not usuario:
+        return pd.DataFrame()
+    response = supabase.table("proveedores").select("*").eq("usuario_id", usuario['id']).execute()
     return pd.DataFrame(response.data) if response.data else pd.DataFrame()
 
 def crear_proveedor(datos):
+    usuario = obtener_usuario_actual()
+    if usuario:
+        datos['usuario_id'] = usuario['id']
     return supabase.table("proveedores").insert(datos).execute().data
 
-def obtener_stock_bajo():
-    response = supabase.table("vista_stock_bajo").select("*").execute()
+# --- COSTOS FIJOS ---
+def obtener_costos_fijos():
+    usuario = obtener_usuario_actual()
+    if not usuario:
+        return pd.DataFrame()
+    response = supabase.table("costos_fijos").select("*").eq("usuario_id", usuario['id']).eq("activo", True).execute()
     return pd.DataFrame(response.data) if response.data else pd.DataFrame()
 
+def crear_costo_fijo(datos):
+    usuario = obtener_usuario_actual()
+    if usuario:
+        datos['usuario_id'] = usuario['id']
+    return supabase.table("costos_fijos").insert(datos).execute().data
+
+def calcular_costos_mes_actual():
+    """Calcula el total de costos fijos del mes actual"""
+    costos = obtener_costos_fijos()
+    if costos.empty:
+        return 0
+    
+    hoy = datetime.now().date()
+    total = 0
+    
+    for _, costo in costos.iterrows():
+        # Verificar que el costo esté activo en este mes
+        if costo['fecha_inicio'] > str(hoy):
+            continue
+        if costo['fecha_fin'] and costo['fecha_fin'] < str(hoy):
+            continue
+            
+        # Calcular monto según frecuencia
+        if costo['frecuencia'] == 'mensual':
+            total += costo['monto']
+        elif costo['frecuencia'] == 'anual':
+            total += costo['monto'] / 12
+        # Los costos únicos no se suman al mensual recurrente
+    
+    return total
+
+# --- REPORTES ---
+def obtener_stock_bajo():
+    usuario = obtener_usuario_actual()
+    if not usuario:
+        return pd.DataFrame()
+    response = supabase.table("vista_stock_bajo").select("*").execute()
+    if not response.data:
+        return pd.DataFrame()
+    df = pd.DataFrame(response.data)
+    # Filtrar por productos del usuario
+    productos_usuario = obtener_productos(activos_solo=False)
+    if productos_usuario.empty:
+        return pd.DataFrame()
+    df = df[df['id'].isin(productos_usuario['id'])]
+    return df
+
 def obtener_ventas_por_producto():
+    usuario = obtener_usuario_actual()
+    if not usuario:
+        return pd.DataFrame()
     response = supabase.table("vista_ventas_por_producto").select("*").execute()
-    return pd.DataFrame(response.data) if response.data else pd.DataFrame()
+    if not response.data:
+        return pd.DataFrame()
+    df = pd.DataFrame(response.data)
+    # Filtrar por productos del usuario
+    productos_usuario = obtener_productos(activos_solo=False)
+    if productos_usuario.empty:
+        return pd.DataFrame()
+    df = df[df['id'].isin(productos_usuario['id'])]
+    return df
 
 def obtener_metricas_dashboard():
     productos = obtener_productos()
@@ -133,10 +294,14 @@ def obtener_metricas_dashboard():
     
     if not ventas_mes.empty:
         ingresos_mes = ventas_mes['subtotal'].sum()
-        ganancia_mes = ventas_mes['ganancia'].sum()
+        ganancia_bruta_mes = ventas_mes['ganancia'].sum()
         cantidad_ventas_mes = len(ventas_mes)
     else:
-        ingresos_mes = ganancia_mes = cantidad_ventas_mes = 0
+        ingresos_mes = ganancia_bruta_mes = cantidad_ventas_mes = 0
+    
+    # Calcular ganancia neta (descontando costos fijos)
+    costos_fijos_mes = calcular_costos_mes_actual()
+    ganancia_neta_mes = ganancia_bruta_mes - costos_fijos_mes
     
     stock_bajo = obtener_stock_bajo()
     alertas_stock = len(stock_bajo)
@@ -145,13 +310,70 @@ def obtener_metricas_dashboard():
         'total_productos': total_productos,
         'valor_stock': valor_stock,
         'ingresos_mes': ingresos_mes,
-        'ganancia_mes': ganancia_mes,
+        'ganancia_bruta_mes': ganancia_bruta_mes,
+        'ganancia_neta_mes': ganancia_neta_mes,
+        'costos_fijos_mes': costos_fijos_mes,
         'cantidad_ventas_mes': cantidad_ventas_mes,
         'alertas_stock': alertas_stock
     }
 
 # ============================================
-# PÁGINAS
+# PÁGINA DE LOGIN
+# ============================================
+
+def pagina_login():
+    st.title("🔐 Sistema de Reventa")
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    
+    with col2:
+        tab1, tab2 = st.tabs(["Iniciar Sesión", "Registrarse"])
+        
+        with tab1:
+            st.subheader("Iniciar Sesión")
+            with st.form("login_form"):
+                email = st.text_input("Email")
+                password = st.text_input("Contraseña", type="password")
+                submitted = st.form_submit_button("Ingresar")
+                
+                if submitted:
+                    if email and password:
+                        usuario = login_usuario(email, password)
+                        if usuario:
+                            st.session_state.usuario = usuario
+                            st.success(f"¡Bienvenido {usuario['nombre']}!")
+                            st.rerun()
+                        else:
+                            st.error("Email o contraseña incorrectos")
+                    else:
+                        st.error("Completá todos los campos")
+        
+        with tab2:
+            st.subheader("Crear Cuenta")
+            with st.form("registro_form"):
+                nuevo_email = st.text_input("Email", key="reg_email")
+                nuevo_nombre = st.text_input("Nombre completo", key="reg_nombre")
+                nueva_password = st.text_input("Contraseña", type="password", key="reg_pass")
+                confirmar_password = st.text_input("Confirmar contraseña", type="password", key="reg_conf")
+                
+                registrar = st.form_submit_button("Crear Cuenta")
+                
+                if registrar:
+                    if not (nuevo_email and nuevo_nombre and nueva_password and confirmar_password):
+                        st.error("Completá todos los campos")
+                    elif nueva_password != confirmar_password:
+                        st.error("Las contraseñas no coinciden")
+                    elif len(nueva_password) < 6:
+                        st.error("La contraseña debe tener al menos 6 caracteres")
+                    else:
+                        usuario = registrar_usuario(nuevo_email, nuevo_nombre, nueva_password)
+                        if usuario:
+                            st.success("¡Cuenta creada! Podés iniciar sesión ahora")
+                        else:
+                            st.error("Error al crear la cuenta. El email puede estar en uso.")
+
+# ============================================
+# PÁGINAS PRINCIPALES
 # ============================================
 
 def pagina_dashboard():
@@ -166,7 +388,24 @@ def pagina_dashboard():
     with col3:
         st.metric("Ingresos del Mes", formato_moneda(metricas['ingresos_mes']))
     with col4:
-        st.metric("Ganancia del Mes", formato_moneda(metricas['ganancia_mes']))
+        st.metric("Ganancia Bruta", formato_moneda(metricas['ganancia_bruta_mes']))
+    
+    # Mostrar ganancia neta vs costos fijos
+    st.divider()
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Costos Fijos Mensuales", formato_moneda(metricas['costos_fijos_mes']))
+    with col2:
+        delta_color = "normal" if metricas['ganancia_neta_mes'] >= 0 else "inverse"
+        st.metric(
+            "Ganancia Neta", 
+            formato_moneda(metricas['ganancia_neta_mes']),
+            delta=f"{metricas['cantidad_ventas_mes']} ventas"
+        )
+    with col3:
+        if metricas['ganancia_bruta_mes'] > 0:
+            margen_neto = (metricas['ganancia_neta_mes'] / metricas['ganancia_bruta_mes'] * 100)
+            st.metric("Margen Neto", f"{margen_neto:.1f}%")
     
     st.divider()
     
@@ -374,6 +613,77 @@ def pagina_ventas():
         else:
             st.info("No hay ventas en el período seleccionado")
 
+def pagina_costos_fijos():
+    st.title("💸 Costos Fijos")
+    
+    tab1, tab2 = st.tabs(["📋 Mis Costos", "➕ Nuevo Costo"])
+    
+    with tab1:
+        costos = obtener_costos_fijos()
+        
+        if not costos.empty:
+            # Calcular total mensual
+            total_mensual = calcular_costos_mes_actual()
+            st.metric("Total Mensual Estimado", formato_moneda(total_mensual))
+            st.divider()
+            
+            # Mostrar tabla
+            costos_display = costos.copy()
+            costos_display['monto_display'] = costos_display['monto'].apply(formato_moneda)
+            
+            st.dataframe(
+                costos_display[['nombre', 'frecuencia', 'monto_display', 'fecha_inicio', 'fecha_fin', 'descripcion']],
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "nombre": "Concepto",
+                    "frecuencia": "Frecuencia",
+                    "monto_display": "Monto",
+                    "fecha_inicio": "Desde",
+                    "fecha_fin": "Hasta",
+                    "descripcion": "Notas"
+                }
+            )
+            
+            st.download_button(
+                label="📥 Descargar Costos (Excel)",
+                data=to_excel(costos_display[['nombre', 'frecuencia', 'monto', 'fecha_inicio', 'fecha_fin', 'descripcion']], "Costos Fijos"),
+                file_name=f"costos_fijos_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        else:
+            st.info("No hay costos fijos registrados")
+    
+    with tab2:
+        with st.form("nuevo_costo"):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                nombre = st.text_input("Concepto *", placeholder="Ej: Alquiler local")
+                monto = st.number_input("Monto *", min_value=0.01, step=0.01)
+                frecuencia = st.selectbox("Frecuencia *", ["mensual", "anual", "unico"])
+            
+            with col2:
+                fecha_inicio = st.date_input("Fecha Inicio *", value=datetime.now().date())
+                fecha_fin = st.date_input("Fecha Fin (opcional)", value=None)
+                descripcion = st.text_area("Notas")
+            
+            if st.form_submit_button("✅ Registrar Costo"):
+                if nombre and monto > 0:
+                    nuevo_costo = {
+                        'nombre': nombre,
+                        'monto': monto,
+                        'frecuencia': frecuencia,
+                        'fecha_inicio': str(fecha_inicio),
+                        'fecha_fin': str(fecha_fin) if fecha_fin else None,
+                        'descripcion': descripcion
+                    }
+                    crear_costo_fijo(nuevo_costo)
+                    st.success(f"✅ Costo '{nombre}' registrado")
+                    st.rerun()
+                else:
+                    st.error("Completá los campos obligatorios")
+
 def pagina_proveedores():
     st.title("👥 Proveedores y Categorías")
     tab1, tab2 = st.tabs(["Proveedores", "Categorías"])
@@ -432,22 +742,35 @@ def pagina_proveedores():
                         st.rerun()
 
 # ============================================
-# NAVEGACIÓN
+# NAVEGACIÓN PRINCIPAL
 # ============================================
 
 def main():
+    # Verificar si hay sesión activa
+    if not verificar_sesion():
+        pagina_login()
+        return
+    
+    # Si hay sesión, mostrar app principal
+    usuario = obtener_usuario_actual()
+    
     with st.sidebar:
         st.title("📦 Sistema de Reventa")
+        st.write(f"👤 {usuario['nombre']}")
         st.divider()
         
         pagina = st.radio(
             "Navegación",
-            ["📊 Dashboard", "📦 Productos", "🛒 Compras", "💰 Ventas", "👥 Proveedores"],
+            ["📊 Dashboard", "📦 Productos", "🛒 Compras", "💰 Ventas", "💸 Costos Fijos", "👥 Proveedores"],
             label_visibility="collapsed"
         )
         
         st.divider()
-        st.caption("v1.0.0")
+        
+        if st.button("🚪 Cerrar Sesión"):
+            cerrar_sesion()
+        
+        st.caption("v2.0.0")
     
     if pagina == "📊 Dashboard":
         pagina_dashboard()
@@ -457,6 +780,8 @@ def main():
         pagina_compras()
     elif pagina == "💰 Ventas":
         pagina_ventas()
+    elif pagina == "💸 Costos Fijos":
+        pagina_costos_fijos()
     elif pagina == "👥 Proveedores":
         pagina_proveedores()
 
