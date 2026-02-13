@@ -45,7 +45,12 @@ def to_excel(df, sheet_name="Datos"):
         
         for col_num, value in enumerate(df.columns.values):
             worksheet.write(0, col_num, value, header_format)
-            max_len = max(df[col].astype(str).apply(len).max(), len(col)) + 2
+            # Calcular ancho de columna de forma segura
+            col_data = df[value].astype(str)
+            if len(col_data) > 0:
+                max_len = max(col_data.apply(len).max(), len(str(value))) + 2
+            else:
+                max_len = len(str(value)) + 2
             worksheet.set_column(col_num, col_num, max_len)
     
     return output.getvalue()
@@ -456,4 +461,4 @@ def main():
         pagina_proveedores()
 
 if __name__ == "__main__":
-    main()
+    main()main()
