@@ -143,12 +143,19 @@ def crear_producto(datos):
 def actualizar_producto(id_producto, datos):
     return supabase.table("productos").update(datos).eq("id", id_producto).execute().data
 
+def eliminar_producto(id_producto):
+    return supabase.table("productos").update({"activo": False}).eq("id", id_producto).execute().data
+
 # --- COMPRAS ---
 def registrar_compra(datos):
     usuario = obtener_usuario_actual()
     if usuario:
         datos['usuario_id'] = usuario['id']
     return supabase.table("compras").insert(datos).execute().data
+
+def eliminar_compra(id_compra):
+    """Elimina una compra - OJO: no revierte el stock automáticamente"""
+    return supabase.table("compras").delete().eq("id", id_compra).execute().data
 
 def obtener_compras(fecha_desde=None, fecha_hasta=None):
     usuario = obtener_usuario_actual()
@@ -168,6 +175,10 @@ def registrar_venta(datos):
     if usuario:
         datos['usuario_id'] = usuario['id']
     return supabase.table("ventas").insert(datos).execute().data
+
+def eliminar_venta(id_venta):
+    """Elimina una venta - OJO: no revierte el stock automáticamente"""
+    return supabase.table("ventas").delete().eq("id", id_venta).execute().data
 
 def obtener_ventas(fecha_desde=None, fecha_hasta=None):
     usuario = obtener_usuario_actual()
@@ -213,6 +224,12 @@ def crear_proveedor(datos):
         datos['usuario_id'] = usuario['id']
     return supabase.table("proveedores").insert(datos).execute().data
 
+def actualizar_proveedor(id_proveedor, datos):
+    return supabase.table("proveedores").update(datos).eq("id", id_proveedor).execute().data
+
+def eliminar_proveedor(id_proveedor):
+    return supabase.table("proveedores").delete().eq("id", id_proveedor).execute().data
+
 # --- COSTOS FIJOS ---
 def obtener_costos_fijos():
     usuario = obtener_usuario_actual()
@@ -226,6 +243,12 @@ def crear_costo_fijo(datos):
     if usuario:
         datos['usuario_id'] = usuario['id']
     return supabase.table("costos_fijos").insert(datos).execute().data
+
+def actualizar_costo_fijo(id_costo, datos):
+    return supabase.table("costos_fijos").update(datos).eq("id", id_costo).execute().data
+
+def eliminar_costo_fijo(id_costo):
+    return supabase.table("costos_fijos").update({"activo": False}).eq("id", id_costo).execute().data
 
 def calcular_costos_mes_actual():
     """Calcula el total de costos fijos del mes actual"""
@@ -426,7 +449,7 @@ def pagina_dashboard():
 
 def pagina_productos():
     st.title("📦 Gestión de Productos")
-    tab1, tab2 = st.tabs(["📋 Lista", "➕ Nuevo"])
+    tab1, tab2, tab3 = st.tabs(["📋 Lista", "➕ Nuevo", "✏️ Editar/Eliminar"])
     
     with tab1:
         productos = obtener_productos()
@@ -493,6 +516,51 @@ def pagina_productos():
                     st.rerun()
                 else:
                     st.error("Completá los campos obligatorios")
+    
+    with tab3:
+        productos = obtener_productos(activos_solo=False)
+        if productos.empty:
+            st.info("No hay productos para editar")
+            return
+        
+        producto_seleccionado = st.selectbox(
+            "Seleccionar producto",
+            productos['id'].tolist(),
+            format_func=lambda x: productos[productos['id']==x]['nombre'].values[0]
+        )
+        
+        if producto_seleccionado:
+            prod = productos[productos['id']==producto_seleccionado].iloc[0]
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.subheader("✏️ Editar")
+                with st.form("editar_producto"):
+                    nuevo_nombre = st.text_input("Nombre", value=prod['nombre'])
+                    nuevo_precio_compra = st.number_input("Precio Compra", value=float(prod['precio_compra']), step=0.01)
+                    nuevo_precio_venta = st.number_input("Precio Venta", value=float(prod['precio_venta']), step=0.01)
+                    nuevo_stock_minimo = st.number_input("Stock Mínimo", value=int(prod['stock_minimo']), step=1)
+                    
+                    if st.form_submit_button("💾 Guardar Cambios"):
+                        actualizar_producto(producto_seleccionado, {
+                            'nombre': nuevo_nombre,
+                            'precio_compra': nuevo_precio_compra,
+                            'precio_venta': nuevo_precio_venta,
+                            'stock_minimo': nuevo_stock_minimo
+                        })
+                        st.success("✅ Producto actualizado")
+                        st.rerun()
+            
+            with col2:
+                st.subheader("🗑️ Eliminar")
+                st.warning(f"**Producto:** {prod['nombre']}")
+                st.write(f"Stock actual: {prod['stock_actual']}")
+                
+                if st.button("🗑️ Eliminar Producto", type="secondary"):
+                    eliminar_producto(producto_seleccionado)
+                    st.success("✅ Producto eliminado")
+                    st.rerun()
 
 def pagina_compras():
     st.title("🛒 Gestión de Compras")
@@ -525,8 +593,12 @@ def pagina_compras():
                 st.rerun()
     
     with tab2:
-        fecha_desde = st.date_input("Desde", value=datetime.now().date() - timedelta(days=30), key="comp_desde")
-        fecha_hasta = st.date_input("Hasta", value=datetime.now().date(), key="comp_hasta")
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            fecha_desde = st.date_input("Desde", value=datetime.now().date() - timedelta(days=30), key="comp_desde")
+        with col2:
+            fecha_hasta = st.date_input("Hasta", value=datetime.now().date(), key="comp_hasta")
+        
         compras = obtener_compras(str(fecha_desde), str(fecha_hasta))
         
         if not compras.empty:
@@ -535,11 +607,18 @@ def pagina_compras():
                 lambda x: x['nombre'] if x else 'N/A'
             )
             
-            st.dataframe(
-                compras_display[['fecha', 'producto', 'cantidad', 'precio_unitario', 'total']],
-                use_container_width=True,
-                hide_index=True
-            )
+            # Mostrar con opción de eliminar
+            for idx, compra in compras_display.iterrows():
+                col1, col2 = st.columns([5, 1])
+                with col1:
+                    st.write(f"**{compra['fecha']}** - {compra['producto']} - {compra['cantidad']} unidades - {formato_moneda(compra['total'])}")
+                with col2:
+                    if st.button("🗑️", key=f"del_compra_{compra['id']}"):
+                        eliminar_compra(compra['id'])
+                        st.warning("⚠️ Compra eliminada. Recordá ajustar el stock manualmente si es necesario.")
+                        st.rerun()
+            
+            st.divider()
             
             st.download_button(
                 label="📥 Descargar Compras (Excel)",
@@ -548,6 +627,13 @@ def pagina_compras():
                 file_name=f"compras_{fecha_desde}_{fecha_hasta}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
+            
+            # Resumen
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Total Compras", len(compras))
+            with col2:
+                st.metric("Inversión Total", formato_moneda(compras_display['total'].sum()))
         else:
             st.info("No hay compras en el período seleccionado")
 
@@ -585,8 +671,12 @@ def pagina_ventas():
                     st.error(f"Error: {str(e)}")
     
     with tab2:
-        fecha_desde = st.date_input("Desde", value=datetime.now().date() - timedelta(days=30), key="venta_desde")
-        fecha_hasta = st.date_input("Hasta", value=datetime.now().date(), key="venta_hasta")
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            fecha_desde = st.date_input("Desde", value=datetime.now().date() - timedelta(days=30), key="venta_desde")
+        with col2:
+            fecha_hasta = st.date_input("Hasta", value=datetime.now().date(), key="venta_hasta")
+        
         ventas = obtener_ventas(str(fecha_desde), str(fecha_hasta))
         
         if not ventas.empty:
@@ -595,12 +685,18 @@ def pagina_ventas():
                 lambda x: x['nombre'] if x else 'N/A'
             )
             
-            st.dataframe(
-                ventas_display[['fecha', 'producto', 'cantidad', 'precio_unitario', 
-                               'subtotal', 'ganancia', 'margen_porcentaje']],
-                use_container_width=True,
-                hide_index=True
-            )
+            # Mostrar con opción de eliminar
+            for idx, venta in ventas_display.iterrows():
+                col1, col2 = st.columns([5, 1])
+                with col1:
+                    st.write(f"**{venta['fecha']}** - {venta['producto']} - {venta['cantidad']} unidades - {formato_moneda(venta['subtotal'])} (Ganancia: {formato_moneda(venta['ganancia'])})")
+                with col2:
+                    if st.button("🗑️", key=f"del_venta_{venta['id']}"):
+                        eliminar_venta(venta['id'])
+                        st.warning("⚠️ Venta eliminada. Recordá ajustar el stock manualmente si es necesario.")
+                        st.rerun()
+            
+            st.divider()
             
             st.download_button(
                 label="📥 Descargar Ventas (Excel)",
@@ -610,13 +706,22 @@ def pagina_ventas():
                 file_name=f"ventas_{fecha_desde}_{fecha_hasta}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
+            
+            # Resumen
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Total Ventas", len(ventas))
+            with col2:
+                st.metric("Ingresos", formato_moneda(ventas_display['subtotal'].sum()))
+            with col3:
+                st.metric("Ganancia Total", formato_moneda(ventas_display['ganancia'].sum()))
         else:
             st.info("No hay ventas en el período seleccionado")
 
 def pagina_costos_fijos():
     st.title("💸 Costos Fijos")
     
-    tab1, tab2 = st.tabs(["📋 Mis Costos", "➕ Nuevo Costo"])
+    tab1, tab2, tab3 = st.tabs(["📋 Mis Costos", "➕ Nuevo Costo", "✏️ Editar/Eliminar"])
     
     with tab1:
         costos = obtener_costos_fijos()
@@ -683,14 +788,59 @@ def pagina_costos_fijos():
                     st.rerun()
                 else:
                     st.error("Completá los campos obligatorios")
+    
+    with tab3:
+        costos = obtener_costos_fijos()
+        if costos.empty:
+            st.info("No hay costos para editar")
+            return
+        
+        costo_seleccionado = st.selectbox(
+            "Seleccionar costo",
+            costos['id'].tolist(),
+            format_func=lambda x: f"{costos[costos['id']==x]['nombre'].values[0]} - {formato_moneda(costos[costos['id']==x]['monto'].values[0])}"
+        )
+        
+        if costo_seleccionado:
+            costo = costos[costos['id']==costo_seleccionado].iloc[0]
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.subheader("✏️ Editar")
+                with st.form("editar_costo"):
+                    nuevo_nombre = st.text_input("Concepto", value=costo['nombre'])
+                    nuevo_monto = st.number_input("Monto", value=float(costo['monto']), step=0.01)
+                    nueva_descripcion = st.text_area("Notas", value=costo['descripcion'] if costo['descripcion'] else "")
+                    
+                    if st.form_submit_button("💾 Guardar Cambios"):
+                        actualizar_costo_fijo(costo_seleccionado, {
+                            'nombre': nuevo_nombre,
+                            'monto': nuevo_monto,
+                            'descripcion': nueva_descripcion
+                        })
+                        st.success("✅ Costo actualizado")
+                        st.rerun()
+            
+            with col2:
+                st.subheader("🗑️ Eliminar")
+                st.warning(f"**Costo:** {costo['nombre']}")
+                st.write(f"Monto: {formato_moneda(costo['monto'])}")
+                st.write(f"Frecuencia: {costo['frecuencia']}")
+                
+                if st.button("🗑️ Eliminar Costo", type="secondary"):
+                    eliminar_costo_fijo(costo_seleccionado)
+                    st.success("✅ Costo eliminado")
+                    st.rerun()
 
 def pagina_proveedores():
     st.title("👥 Proveedores y Categorías")
     tab1, tab2 = st.tabs(["Proveedores", "Categorías"])
     
     with tab1:
-        col1, col2 = st.columns([2, 1])
-        with col1:
+        subtab1, subtab2, subtab3 = st.tabs(["📋 Lista", "➕ Nuevo", "✏️ Editar/Eliminar"])
+        
+        with subtab1:
             proveedores = obtener_proveedores()
             if not proveedores.empty:
                 st.dataframe(
@@ -701,7 +851,7 @@ def pagina_proveedores():
             else:
                 st.info("No hay proveedores registrados")
         
-        with col2:
+        with subtab2:
             with st.form("nuevo_proveedor"):
                 nombre = st.text_input("Nombre")
                 contacto = st.text_input("Contacto")
@@ -716,30 +866,70 @@ def pagina_proveedores():
                         })
                         st.success("✅ Proveedor creado")
                         st.rerun()
+        
+        with subtab3:
+            proveedores = obtener_proveedores()
+            if proveedores.empty:
+                st.info("No hay proveedores")
+                return
+            
+            prov_seleccionado = st.selectbox(
+                "Seleccionar proveedor",
+                proveedores['id'].tolist(),
+                format_func=lambda x: proveedores[proveedores['id']==x]['nombre'].values[0],
+                key="select_prov"
+            )
+            
+            if prov_seleccionado:
+                prov = proveedores[proveedores['id']==prov_seleccionado].iloc[0]
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.subheader("✏️ Editar")
+                    with st.form("editar_proveedor"):
+                        nuevo_nombre = st.text_input("Nombre", value=prov['nombre'])
+                        nuevo_contacto = st.text_input("Contacto", value=prov['contacto'] if prov['contacto'] else "")
+                        nuevo_telefono = st.text_input("Teléfono", value=prov['telefono'] if prov['telefono'] else "")
+                        
+                        if st.form_submit_button("💾 Guardar"):
+                            actualizar_proveedor(prov_seleccionado, {
+                                'nombre': nuevo_nombre,
+                                'contacto': nuevo_contacto,
+                                'telefono': nuevo_telefono
+                            })
+                            st.success("✅ Proveedor actualizado")
+                            st.rerun()
+                
+                with col2:
+                    st.subheader("🗑️ Eliminar")
+                    st.warning(f"**{prov['nombre']}**")
+                    if st.button("🗑️ Eliminar Proveedor", key="del_prov"):
+                        eliminar_proveedor(prov_seleccionado)
+                        st.success("✅ Proveedor eliminado")
+                        st.rerun()
     
     with tab2:
-        col1, col2 = st.columns([2, 1])
-        with col1:
-            categorias = obtener_categorias()
-            if not categorias.empty:
-                st.dataframe(
-                    categorias[['nombre', 'descripcion']], 
-                    use_container_width=True, 
-                    hide_index=True
-                )
-            else:
-                st.info("No hay categorías registradas")
+        categorias = obtener_categorias()
+        if not categorias.empty:
+            st.dataframe(
+                categorias[['nombre', 'descripcion']], 
+                use_container_width=True, 
+                hide_index=True
+            )
+        else:
+            st.info("No hay categorías registradas")
         
-        with col2:
-            with st.form("nueva_categoria"):
-                nombre = st.text_input("Nombre")
-                descripcion = st.text_area("Descripción")
-                
-                if st.form_submit_button("✅ Crear"):
-                    if nombre:
-                        crear_categoria(nombre, descripcion)
-                        st.success("✅ Categoría creada")
-                        st.rerun()
+        st.divider()
+        with st.form("nueva_categoria"):
+            nombre = st.text_input("Nombre")
+            descripcion = st.text_area("Descripción")
+            
+            if st.form_submit_button("✅ Crear"):
+                if nombre:
+                    crear_categoria(nombre, descripcion)
+                    st.success("✅ Categoría creada")
+                    st.rerun()
 
 # ============================================
 # NAVEGACIÓN PRINCIPAL
