@@ -420,7 +420,7 @@ def obtener_ventas(fecha_desde=None, fecha_hasta=None):
     usuario = obtener_usuario_actual()
     if not usuario:
         return pd.DataFrame()
-    query = supabase.table("ventas").select("*, productos(nombre, codigo)").eq("usuario_id", usuario['id']).order("fecha", desc=True)
+    query = supabase.table("ventas").select("*, productos(nombre, codigo), clientes(dni, nombre)").eq("usuario_id", usuario['id']).order("fecha", desc=True)
     if fecha_desde:
         query = query.gte("fecha", fecha_desde)
     if fecha_hasta:
@@ -647,6 +647,74 @@ def guardar_precio(producto_id, margen_teorico, precio_final):
         datos['producto_id'] = producto_id
         datos['usuario_id'] = usuario['id']
         return supabase.table("lista_precios").insert(datos).execute().data
+
+# --- CLIENTES ---
+def buscar_cliente_por_dni(dni):
+    """Busca un cliente por DNI"""
+    usuario = obtener_usuario_actual()
+    if not usuario:
+        return None
+    
+    response = supabase.table("clientes").select("*").eq("dni", dni).eq("usuario_id", usuario['id']).execute()
+    return response.data[0] if response.data else None
+
+def buscar_clientes(termino):
+    """Busca clientes por DNI, nombre o teléfono"""
+    usuario = obtener_usuario_actual()
+    if not usuario:
+        return pd.DataFrame()
+    
+    # Buscar por múltiples campos
+    response = supabase.table("clientes").select("*").eq("usuario_id", usuario['id']).or_(
+        f"dni.ilike.%{termino}%,nombre.ilike.%{termino}%,telefono.ilike.%{termino}%"
+    ).limit(10).execute()
+    
+    return pd.DataFrame(response.data) if response.data else pd.DataFrame()
+
+def crear_cliente(datos):
+    """Crea un nuevo cliente"""
+    usuario = obtener_usuario_actual()
+    if not usuario:
+        return None
+    
+    datos['usuario_id'] = usuario['id']
+    return supabase.table("clientes").insert(datos).execute().data
+
+def actualizar_cliente(cliente_id, datos):
+    """Actualiza un cliente existente"""
+    return supabase.table("clientes").update(datos).eq("id", cliente_id).execute().data
+
+def obtener_clientes():
+    """Obtiene todos los clientes del usuario"""
+    usuario = obtener_usuario_actual()
+    if not usuario:
+        return pd.DataFrame()
+    
+    response = supabase.table("clientes").select("*").eq("usuario_id", usuario['id']).order("nombre").execute()
+    return pd.DataFrame(response.data) if response.data else pd.DataFrame()
+
+def obtener_clientes_frecuentes():
+    """Obtiene clientes frecuentes (vista)"""
+    usuario = obtener_usuario_actual()
+    if not usuario:
+        return pd.DataFrame()
+    
+    response = supabase.table("vista_clientes_frecuentes").select("*").eq("usuario_id", usuario['id']).execute()
+    return pd.DataFrame(response.data) if response.data else pd.DataFrame()
+
+def obtener_clientes_inactivos():
+    """Obtiene clientes inactivos (más de 30 días sin comprar)"""
+    usuario = obtener_usuario_actual()
+    if not usuario:
+        return pd.DataFrame()
+    
+    response = supabase.table("vista_clientes_inactivos").select("*").eq("usuario_id", usuario['id']).execute()
+    return pd.DataFrame(response.data) if response.data else pd.DataFrame()
+
+def obtener_historial_cliente(cliente_id):
+    """Obtiene el historial de compras de un cliente"""
+    response = supabase.table("ventas").select("*, productos(nombre, codigo)").eq("cliente_id", cliente_id).order("fecha", desc=True).execute()
+    return pd.DataFrame(response.data) if response.data else pd.DataFrame()
 
 def calcular_costos_mes_actual():
     """Calcula el total de costos fijos del mes actual"""
@@ -1304,23 +1372,107 @@ def pagina_ventas():
             st.warning("No hay productos registrados")
             return
         
+        # Búsqueda de cliente
+        st.subheader("1️⃣ Cliente")
+        col_dni, col_buscar = st.columns([3, 1])
+        
+        with col_dni:
+            dni_cliente = st.text_input("DNI del Cliente (opcional)", max_chars=20, help="Dejá vacío para venta sin cliente")
+        
+        cliente_seleccionado = None
+        mostrar_form_nuevo_cliente = False
+        
+        if dni_cliente:
+            with col_buscar:
+                if st.button("🔍 Buscar"):
+                    cliente_seleccionado = buscar_cliente_por_dni(dni_cliente)
+            
+            if cliente_seleccionado:
+                st.success(f"✅ **{cliente_seleccionado['nombre']}** - Tel: {cliente_seleccionado.get('telefono', 'N/A')}")
+            else:
+                st.warning(f"⚠️ Cliente con DNI {dni_cliente} no encontrado")
+                mostrar_form_nuevo_cliente = st.checkbox("➕ Registrar cliente nuevo")
+        
+        # Formulario de nuevo cliente (si es necesario)
+        nuevo_cliente_id = None
+        if mostrar_form_nuevo_cliente:
+            with st.expander("📝 Datos del nuevo cliente", expanded=True):
+                col1, col2 = st.columns(2)
+                with col1:
+                    nuevo_nombre = st.text_input("Nombre Completo *", key="venta_nuevo_nombre")
+                    nuevo_telefono = st.text_input("Teléfono", key="venta_nuevo_tel")
+                with col2:
+                    nuevo_email = st.text_input("Email", key="venta_nuevo_email")
+                    nuevas_notas = st.text_input("Notas", key="venta_nuevo_notas")
+                
+                if st.button("💾 Guardar Cliente"):
+                    if nuevo_nombre:
+                        resultado = crear_cliente({
+                            'dni': dni_cliente,
+                            'nombre': nuevo_nombre,
+                            'telefono': nuevo_telefono if nuevo_telefono else None,
+                            'email': nuevo_email if nuevo_email else None,
+                            'notas': nuevas_notas if nuevas_notas else None
+                        })
+                        if resultado:
+                            st.success(f"✅ Cliente {nuevo_nombre} registrado")
+                            nuevo_cliente_id = resultado[0]['id']
+                            st.rerun()
+                    else:
+                        st.error("El nombre es obligatorio")
+        
+        st.divider()
+        
+        # Formulario de venta
+        st.subheader("2️⃣ Datos de la Venta")
         with st.form("nueva_venta"):
             producto_id = st.selectbox(
-                "Producto",
+                "Producto *",
                 productos['id'].tolist(),
-                format_func=lambda x: f"{productos[productos['id']==x]['nombre'].values[0]} (Stock: {productos[productos['id']==x]['stock_actual'].values[0]})"
+                format_func=lambda x: f"{productos[productos['id']==x]['codigo'].values[0]} - {productos[productos['id']==x]['nombre'].values[0]} (Stock: {productos[productos['id']==x]['stock_actual'].values[0]})"
             )
-            cantidad = st.number_input("Cantidad", min_value=1, step=1)
-            precio_unitario = st.number_input("Precio Venta", min_value=0.01, step=0.01)
-            fecha_venta = st.date_input("Fecha", value=datetime.now().date())
             
-            if st.form_submit_button("✅ Registrar"):
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                cantidad = st.number_input("Cantidad *", min_value=1, step=1)
+            with col2:
+                # Obtener precio sugerido de lista de precios
+                precio_sugerido = 0
+                lista_precios = obtener_lista_precios()
+                if not lista_precios.empty:
+                    producto_precio = lista_precios[lista_precios['producto_id'] == producto_id]
+                    if not producto_precio.empty:
+                        precio_sugerido = float(producto_precio.iloc[0]['precio_final'])
+                
+                precio_unitario = st.number_input(
+                    "Precio Venta *", 
+                    min_value=0.01, 
+                    step=0.01,
+                    value=precio_sugerido if precio_sugerido > 0 else 0.01,
+                    help="Precio de la Lista de Precios" if precio_sugerido > 0 else None
+                )
+            with col3:
+                fecha_venta = st.date_input("Fecha", value=datetime.now().date())
+            
+            # Mostrar total
+            total_venta = cantidad * precio_unitario
+            st.info(f"💵 **Total de la venta:** {formato_moneda(total_venta)}")
+            
+            if st.form_submit_button("✅ Registrar Venta", type="primary"):
                 try:
+                    # Determinar cliente_id
+                    cliente_id_venta = None
+                    if cliente_seleccionado:
+                        cliente_id_venta = cliente_seleccionado['id']
+                    elif nuevo_cliente_id:
+                        cliente_id_venta = nuevo_cliente_id
+                    
                     registrar_venta({
                         'producto_id': producto_id,
                         'cantidad': cantidad,
                         'precio_unitario': precio_unitario,
-                        'fecha': str(fecha_venta)
+                        'fecha': str(fecha_venta),
+                        'cliente_id': cliente_id_venta
                     })
                     st.success("✅ Venta registrada")
                     st.rerun()
@@ -1341,12 +1493,16 @@ def pagina_ventas():
             ventas_display['producto'] = ventas_display['productos'].apply(
                 lambda x: x['nombre'] if x else 'N/A'
             )
+            ventas_display['cliente'] = ventas_display['clientes'].apply(
+                lambda x: f"{x['nombre']} ({x['dni']})" if x else 'Sin cliente'
+            )
             
             # Mostrar con opción de eliminar
             for idx, venta in ventas_display.iterrows():
                 col1, col2 = st.columns([5, 1])
                 with col1:
-                    st.write(f"**{venta['fecha']}** - {venta['producto']} - {venta['cantidad']} unidades - {formato_moneda(venta['subtotal'])} (Ganancia: {formato_moneda(venta['ganancia'])})")
+                    cliente_info = f" - Cliente: {venta['cliente']}" if venta['cliente'] != 'Sin cliente' else ""
+                    st.write(f"**{venta['fecha']}** - {venta['producto']} - {venta['cantidad']} unidades - {formato_moneda(venta['subtotal'])} (Ganancia: {formato_moneda(venta['ganancia'])}){cliente_info}")
                 with col2:
                     if st.button("🗑️", key=f"del_venta_{venta['id']}"):
                         eliminar_venta(venta['id'])
@@ -1357,7 +1513,7 @@ def pagina_ventas():
             
             st.download_button(
                 label="📥 Descargar Ventas (Excel)",
-                data=to_excel(ventas_display[['fecha', 'producto', 'cantidad', 
+                data=to_excel(ventas_display[['fecha', 'producto', 'cliente', 'cantidad', 
                               'precio_unitario', 'subtotal', 'ganancia', 'margen_porcentaje']], 
                               "Ventas"),
                 file_name=f"ventas_{fecha_desde}_{fecha_hasta}.xlsx",
@@ -1748,6 +1904,206 @@ def pagina_lista_precios():
         precio_min = edited_df['precio_final'].min()
         st.metric("Precio Más Bajo", formato_moneda(precio_min))
 
+def pagina_clientes():
+    st.title("👥 Gestión de Clientes")
+    
+    tab1, tab2, tab3, tab4 = st.tabs(["📋 Lista", "➕ Nuevo Cliente", "📊 Reportes", "✏️ Editar"])
+    
+    with tab1:
+        clientes = obtener_clientes()
+        
+        if not clientes.empty:
+            # Mostrar estadísticas rápidas
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Total Clientes", len(clientes))
+            with col2:
+                clientes_activos = clientes[clientes['total_compras'] > 0]
+                st.metric("Clientes con Compras", len(clientes_activos))
+            with col3:
+                if not clientes.empty and 'total_gastado' in clientes.columns:
+                    promedio = clientes['total_gastado'].mean()
+                    st.metric("Gasto Promedio", formato_moneda(promedio))
+            
+            st.divider()
+            
+            # Buscador
+            busqueda = st.text_input("🔍 Buscar por DNI, nombre o teléfono")
+            
+            if busqueda:
+                clientes_filtrados = clientes[
+                    clientes['dni'].str.contains(busqueda, case=False, na=False) |
+                    clientes['nombre'].str.contains(busqueda, case=False, na=False) |
+                    clientes['telefono'].astype(str).str.contains(busqueda, case=False, na=False)
+                ]
+            else:
+                clientes_filtrados = clientes
+            
+            # Mostrar tabla
+            st.dataframe(
+                clientes_filtrados[['dni', 'nombre', 'telefono', 'email', 'total_compras', 'total_gastado']],
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "dni": "DNI",
+                    "nombre": "Nombre",
+                    "telefono": "Teléfono",
+                    "email": "Email",
+                    "total_compras": st.column_config.NumberColumn("Compras", format="%d"),
+                    "total_gastado": st.column_config.NumberColumn("Total Gastado", format="$%.2f")
+                }
+            )
+            
+            # Descargar
+            st.download_button(
+                label="📥 Descargar Clientes (Excel)",
+                data=to_excel(clientes_filtrados[['dni', 'nombre', 'telefono', 'email', 
+                                                   'total_compras', 'total_gastado', 'notas']], "Clientes"),
+                file_name=f"clientes_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        else:
+            st.info("No hay clientes registrados")
+    
+    with tab2:
+        st.subheader("Registrar Nuevo Cliente")
+        
+        with st.form("nuevo_cliente"):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                dni = st.text_input("DNI *", max_chars=20)
+                nombre = st.text_input("Nombre Completo *")
+                telefono = st.text_input("Teléfono")
+            
+            with col2:
+                email = st.text_input("Email")
+                direccion = st.text_area("Dirección")
+                notas = st.text_area("Notas")
+            
+            if st.form_submit_button("✅ Registrar Cliente"):
+                if dni and nombre:
+                    # Verificar si ya existe
+                    cliente_existe = buscar_cliente_por_dni(dni)
+                    if cliente_existe:
+                        st.error(f"⚠️ Ya existe un cliente con DNI {dni}")
+                    else:
+                        crear_cliente({
+                            'dni': dni,
+                            'nombre': nombre,
+                            'telefono': telefono if telefono else None,
+                            'email': email if email else None,
+                            'direccion': direccion if direccion else None,
+                            'notas': notas if notas else None
+                        })
+                        st.success(f"✅ Cliente {nombre} registrado")
+                        st.rerun()
+                else:
+                    st.error("DNI y Nombre son obligatorios")
+    
+    with tab3:
+        st.subheader("📊 Análisis de Clientes")
+        
+        # Top clientes
+        clientes_frecuentes = obtener_clientes_frecuentes()
+        if not clientes_frecuentes.empty:
+            st.write("**🏆 Top 10 Clientes**")
+            top10 = clientes_frecuentes.head(10)
+            st.dataframe(
+                top10[['nombre', 'dni', 'categoria_cliente', 'total_compras', 'total_gastado', 'ticket_promedio']],
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "nombre": "Cliente",
+                    "dni": "DNI",
+                    "categoria_cliente": "Categoría",
+                    "total_compras": st.column_config.NumberColumn("Compras", format="%d"),
+                    "total_gastado": st.column_config.NumberColumn("Total", format="$%.2f"),
+                    "ticket_promedio": st.column_config.NumberColumn("Ticket Promedio", format="$%.2f")
+                }
+            )
+        
+        st.divider()
+        
+        # Clientes inactivos
+        clientes_inactivos = obtener_clientes_inactivos()
+        if not clientes_inactivos.empty:
+            st.write("**😴 Clientes Inactivos (+30 días sin comprar)**")
+            st.dataframe(
+                clientes_inactivos[['nombre', 'dni', 'telefono', 'ultima_compra', 'dias_sin_comprar']],
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "nombre": "Cliente",
+                    "dni": "DNI",
+                    "telefono": "Teléfono",
+                    "ultima_compra": "Última Compra",
+                    "dias_sin_comprar": st.column_config.NumberColumn("Días sin Comprar", format="%d")
+                }
+            )
+    
+    with tab4:
+        clientes = obtener_clientes()
+        if clientes.empty:
+            st.info("No hay clientes para editar")
+            return
+        
+        cliente_seleccionado = st.selectbox(
+            "Seleccionar cliente",
+            clientes['id'].tolist(),
+            format_func=lambda x: f"{clientes[clientes['id']==x]['dni'].values[0]} - {clientes[clientes['id']==x]['nombre'].values[0]}"
+        )
+        
+        if cliente_seleccionado:
+            cliente = clientes[clientes['id']==cliente_seleccionado].iloc[0]
+            
+            col1, col2 = st.columns([2, 1])
+            
+            with col1:
+                st.subheader("✏️ Editar Datos")
+                with st.form("editar_cliente"):
+                    nuevo_nombre = st.text_input("Nombre", value=cliente['nombre'])
+                    nuevo_telefono = st.text_input("Teléfono", value=cliente['telefono'] if cliente['telefono'] else "")
+                    nuevo_email = st.text_input("Email", value=cliente['email'] if cliente['email'] else "")
+                    nueva_direccion = st.text_area("Dirección", value=cliente['direccion'] if cliente['direccion'] else "")
+                    nuevas_notas = st.text_area("Notas", value=cliente['notas'] if cliente['notas'] else "")
+                    
+                    if st.form_submit_button("💾 Guardar"):
+                        actualizar_cliente(cliente_seleccionado, {
+                            'nombre': nuevo_nombre,
+                            'telefono': nuevo_telefono if nuevo_telefono else None,
+                            'email': nuevo_email if nuevo_email else None,
+                            'direccion': nueva_direccion if nueva_direccion else None,
+                            'notas': nuevas_notas if nuevas_notas else None
+                        })
+                        st.success("✅ Cliente actualizado")
+                        st.rerun()
+            
+            with col2:
+                st.subheader("📊 Estadísticas")
+                st.metric("Compras Totales", int(cliente['total_compras']))
+                st.metric("Total Gastado", formato_moneda(float(cliente['total_gastado'])))
+                if cliente['total_compras'] > 0:
+                    ticket_prom = float(cliente['total_gastado']) / int(cliente['total_compras'])
+                    st.metric("Ticket Promedio", formato_moneda(ticket_prom))
+                
+                # Ver historial
+                if st.button("📜 Ver Historial de Compras"):
+                    historial = obtener_historial_cliente(cliente_seleccionado)
+                    if not historial.empty:
+                        st.write("**Últimas compras:**")
+                        historial_display = historial.copy()
+                        historial_display['producto'] = historial_display['productos'].apply(
+                            lambda x: x['nombre'] if x else 'N/A'
+                        )
+                        st.dataframe(
+                            historial_display[['fecha', 'producto', 'cantidad', 'subtotal']].head(10),
+                            use_container_width=True,
+                            hide_index=True
+                        )
+                    else:
+                        st.info("Sin compras registradas")
+
 # ============================================
 # NAVEGACIÓN PRINCIPAL
 # ============================================
@@ -1768,7 +2124,7 @@ def main():
         
         pagina = st.radio(
             "Navegación",
-            ["📊 Dashboard", "📦 Stock", "💰 Lista de Precios", "🛒 Compras", "💵 Ventas", "💸 Costos Fijos", "👥 Proveedores", "🏷️ Categorías"],
+            ["📊 Dashboard", "📦 Stock", "💰 Lista de Precios", "🛒 Compras", "💵 Ventas", "👥 Clientes", "💸 Costos Fijos", "🏪 Proveedores", "🏷️ Categorías"],
             label_visibility="collapsed"
         )
         
@@ -1789,9 +2145,11 @@ def main():
         pagina_compras()
     elif pagina == "💵 Ventas":
         pagina_ventas()
+    elif pagina == "👥 Clientes":
+        pagina_clientes()
     elif pagina == "💸 Costos Fijos":
         pagina_costos_fijos()
-    elif pagina == "👥 Proveedores":
+    elif pagina == "🏪 Proveedores":
         pagina_proveedores()
     elif pagina == "🏷️ Categorías":
         pagina_categorias()
