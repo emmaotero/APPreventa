@@ -1372,30 +1372,45 @@ def pagina_ventas():
             st.warning("No hay productos registrados")
             return
         
+        # Inicializar session state para cliente
+        if 'cliente_venta' not in st.session_state:
+            st.session_state.cliente_venta = None
+        
         # Búsqueda de cliente
         st.subheader("1️⃣ Cliente")
-        col_dni, col_buscar = st.columns([3, 1])
+        col_dni, col_buscar, col_limpiar = st.columns([3, 1, 1])
         
         with col_dni:
-            dni_cliente = st.text_input("DNI del Cliente (opcional)", max_chars=20, help="Dejá vacío para venta sin cliente")
+            dni_cliente = st.text_input("DNI del Cliente (opcional)", max_chars=20, help="Dejá vacío para venta sin cliente", key="dni_input")
         
-        cliente_seleccionado = None
-        mostrar_form_nuevo_cliente = False
+        with col_buscar:
+            st.write("")  # Espaciado
+            if st.button("🔍 Buscar", use_container_width=True):
+                if dni_cliente:
+                    cliente = buscar_cliente_por_dni(dni_cliente)
+                    if cliente:
+                        st.session_state.cliente_venta = cliente
+                    else:
+                        st.session_state.cliente_venta = None
         
-        if dni_cliente:
-            with col_buscar:
-                if st.button("🔍 Buscar"):
-                    cliente_seleccionado = buscar_cliente_por_dni(dni_cliente)
-            
-            if cliente_seleccionado:
-                st.success(f"✅ **{cliente_seleccionado['nombre']}** - Tel: {cliente_seleccionado.get('telefono', 'N/A')}")
-            else:
-                st.warning(f"⚠️ Cliente con DNI {dni_cliente} no encontrado")
-                mostrar_form_nuevo_cliente = st.checkbox("➕ Registrar cliente nuevo")
+        with col_limpiar:
+            st.write("")  # Espaciado
+            if st.button("🗑️ Limpiar", use_container_width=True):
+                st.session_state.cliente_venta = None
+                st.rerun()
+        
+        # Mostrar cliente seleccionado
+        if st.session_state.cliente_venta:
+            st.success(f"✅ **{st.session_state.cliente_venta['nombre']}** - DNI: {st.session_state.cliente_venta['dni']} - Tel: {st.session_state.cliente_venta.get('telefono', 'N/A')}")
+            mostrar_form_nuevo_cliente = False
+        elif dni_cliente:
+            st.warning(f"⚠️ Cliente con DNI {dni_cliente} no encontrado")
+            mostrar_form_nuevo_cliente = st.checkbox("➕ Registrar cliente nuevo")
+        else:
+            mostrar_form_nuevo_cliente = False
         
         # Formulario de nuevo cliente (si es necesario)
-        nuevo_cliente_id = None
-        if mostrar_form_nuevo_cliente:
+        if mostrar_form_nuevo_cliente and dni_cliente:
             with st.expander("📝 Datos del nuevo cliente", expanded=True):
                 col1, col2 = st.columns(2)
                 with col1:
@@ -1416,7 +1431,7 @@ def pagina_ventas():
                         })
                         if resultado:
                             st.success(f"✅ Cliente {nuevo_nombre} registrado")
-                            nuevo_cliente_id = resultado[0]['id']
+                            st.session_state.cliente_venta = resultado[0]
                             st.rerun()
                     else:
                         st.error("El nombre es obligatorio")
@@ -1460,12 +1475,10 @@ def pagina_ventas():
             
             if st.form_submit_button("✅ Registrar Venta", type="primary"):
                 try:
-                    # Determinar cliente_id
+                    # Usar cliente de session_state
                     cliente_id_venta = None
-                    if cliente_seleccionado:
-                        cliente_id_venta = cliente_seleccionado['id']
-                    elif nuevo_cliente_id:
-                        cliente_id_venta = nuevo_cliente_id
+                    if st.session_state.cliente_venta:
+                        cliente_id_venta = st.session_state.cliente_venta['id']
                     
                     registrar_venta({
                         'producto_id': producto_id,
@@ -1475,6 +1488,8 @@ def pagina_ventas():
                         'cliente_id': cliente_id_venta
                     })
                     st.success("✅ Venta registrada")
+                    # Limpiar cliente después de registrar
+                    st.session_state.cliente_venta = None
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error: {str(e)}")
