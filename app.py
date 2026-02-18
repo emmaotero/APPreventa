@@ -1653,12 +1653,9 @@ def pagina_lista_precios():
     
     st.info("""
     **¿Cómo funciona?**
-    - **Margen Teórico %**: El margen que querés aplicar (editable)
-    - **Precio Sugerido**: Se calcula automáticamente (Costo × (1 + Margen%))
-    - **Precio Final**: El precio que vas a cobrar (editable)
-    - **Margen Real %**: Se calcula automáticamente según el precio final
-    
-    💡 Los cálculos se actualizan cuando guardás los cambios
+    - **Margen Teórico %**: Editalo y el Precio Sugerido se recalcula automáticamente
+    - **Precio Final**: Editalo y el Margen Real se recalcula automáticamente
+    - Los cambios se guardan al hacer click en "Guardar Cambios"
     """)
     
     lista = obtener_lista_precios()
@@ -1667,67 +1664,59 @@ def pagina_lista_precios():
         st.warning("No hay productos en stock. Primero cargá productos.")
         return
     
+    # Ocultar producto_id de la vista
+    lista_display = lista[['codigo', 'nombre', 'precio_costo', 'margen_teorico', 'precio_sugerido', 'precio_final', 'margen_real']].copy()
+    
     # Configurar columnas editables
     columnas_config = {
         'codigo': st.column_config.TextColumn("Código", disabled=True, width="small"),
         'nombre': st.column_config.TextColumn("Producto", disabled=True, width="medium"),
         'precio_costo': st.column_config.NumberColumn("Precio Costo", disabled=True, format="$%.2f", width="small"),
-        'margen_teorico': st.column_config.NumberColumn("Margen Teórico %", min_value=0, max_value=500, step=1, format="%.1f", width="small", help="Al cambiar esto, el Precio Sugerido se recalculará al guardar"),
+        'margen_teorico': st.column_config.NumberColumn("Margen Teórico %", min_value=0, max_value=500, step=1, format="%.1f", width="small"),
         'precio_sugerido': st.column_config.NumberColumn("Precio Sugerido", disabled=True, format="$%.2f", width="small"),
-        'precio_final': st.column_config.NumberColumn("Precio Final", min_value=0, step=0.01, format="$%.2f", width="small", help="Al cambiar esto, el Margen Real se recalculará al guardar"),
+        'precio_final': st.column_config.NumberColumn("Precio Final", min_value=0, step=0.01, format="$%.2f", width="small"),
         'margen_real': st.column_config.NumberColumn("Margen Real %", disabled=True, format="%.2f", width="small")
     }
     
     # Mostrar tabla editable
     edited_df = st.data_editor(
-        lista,
+        lista_display,
         column_config=columnas_config,
         hide_index=True,
         use_container_width=True,
         num_rows="fixed",
-        key="editor_precios"
+        key="editor_precios",
+        disabled=False
     )
     
-    # Recalcular valores basados en ediciones
-    for idx, row in edited_df.iterrows():
-        row_original = lista.iloc[idx]
+    # Recalcular automáticamente precio sugerido y margen real
+    for idx in range(len(edited_df)):
+        precio_costo = edited_df.iloc[idx]['precio_costo']
+        margen_teorico = edited_df.iloc[idx]['margen_teorico']
+        precio_final = edited_df.iloc[idx]['precio_final']
         
-        # Si cambió el margen teórico, recalcular precio sugerido
-        if row['margen_teorico'] != row_original['margen_teorico']:
-            edited_df.at[idx, 'precio_sugerido'] = round(row['precio_costo'] * (1 + row['margen_teorico'] / 100), 2)
+        # Recalcular precio sugerido
+        edited_df.at[idx, 'precio_sugerido'] = round(precio_costo * (1 + margen_teorico / 100), 2)
         
-        # Si cambió el precio final O el margen teórico, recalcular margen real
-        if row['precio_final'] != row_original['precio_final'] or row['margen_teorico'] != row_original['margen_teorico']:
-            if row['precio_costo'] > 0:
-                edited_df.at[idx, 'margen_real'] = round(((row['precio_final'] - row['precio_costo']) / row['precio_costo']) * 100, 2)
-    
-    # Mostrar la tabla recalculada
-    st.divider()
-    st.subheader("Vista previa con cálculos actualizados")
-    st.dataframe(
-        edited_df[['codigo', 'nombre', 'precio_costo', 'margen_teorico', 'precio_sugerido', 'precio_final', 'margen_real']],
-        hide_index=True,
-        use_container_width=True,
-        column_config=columnas_config
-    )
+        # Recalcular margen real
+        if precio_costo > 0:
+            edited_df.at[idx, 'margen_real'] = round(((precio_final - precio_costo) / precio_costo) * 100, 2)
     
     # Botón para guardar cambios
     col1, col2 = st.columns([1, 4])
     with col1:
         if st.button("💾 Guardar Cambios", type="primary"):
             try:
-                # Guardar con valores recalculados
                 cambios = 0
-                for idx, row in edited_df.iterrows():
-                    row_original = lista.iloc[idx]
+                for idx in range(len(edited_df)):
+                    # Obtener producto_id del dataframe original
+                    producto_id = lista.iloc[idx]['producto_id']
+                    margen_teorico = edited_df.iloc[idx]['margen_teorico']
+                    precio_final = edited_df.iloc[idx]['precio_final']
                     
-                    # Verificar si hubo cambios
-                    if (row['margen_teorico'] != row_original['margen_teorico'] or 
-                        row['precio_final'] != row_original['precio_final']):
-                        
-                        # Guardar con valores ya recalculados
-                        guardar_precio(row['producto_id'], row['margen_teorico'], row['precio_final'])
-                        cambios += 1
+                    # Guardar
+                    guardar_precio(producto_id, margen_teorico, precio_final)
+                    cambios += 1
                 
                 if cambios > 0:
                     st.success(f"✅ {cambios} precio(s) actualizado(s)")
@@ -1741,8 +1730,7 @@ def pagina_lista_precios():
     with col2:
         st.download_button(
             label="📥 Descargar Lista de Precios (Excel)",
-            data=to_excel(edited_df[['codigo', 'nombre', 'precio_costo', 'margen_teorico', 
-                                     'precio_sugerido', 'precio_final', 'margen_real']], "Lista de Precios"),
+            data=to_excel(edited_df, "Lista de Precios"),
             file_name=f"lista_precios_{datetime.now().strftime('%Y%m%d')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
