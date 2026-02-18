@@ -146,6 +146,207 @@ def actualizar_producto(id_producto, datos):
 def eliminar_producto(id_producto):
     return supabase.table("productos").update({"activo": False}).eq("id", id_producto).execute().data
 
+# --- IMPORTACIÓN MASIVA ---
+def generar_template_importacion():
+    """Genera un Excel template para importar productos"""
+    template_data = {
+        'nombre': ['Ejemplo: Coca Cola'],
+        'marca': ['Coca Cola'],
+        'categoria': ['Bebidas'],
+        'variedad': ['Zero'],
+        'presentacion': ['2.25 ltr'],
+        'unidad': ['Unidad'],
+        'precio_compra': [150.00],
+        'stock_inicial': [10],
+        'stock_minimo': [5],
+        'proveedor': ['Distribuidora XX'],
+        'ubicacion': ['Góndola A'],
+        'detalle': ['Nota opcional'],
+        'fecha_compra': ['2024-02-18']
+    }
+    
+    df = pd.DataFrame(template_data)
+    output = BytesIO()
+    
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, sheet_name='Productos', index=False)
+        workbook = writer.book
+        worksheet = writer.sheets['Productos']
+        
+        # Formato para encabezados
+        header_format = workbook.add_format({
+            'bold': True,
+            'bg_color': '#4CAF50',
+            'font_color': 'white',
+            'border': 1
+        })
+        
+        # Formato para datos de ejemplo
+        example_format = workbook.add_format({
+            'bg_color': '#E8F5E9',
+            'italic': True
+        })
+        
+        # Aplicar formatos
+        for col_num, value in enumerate(df.columns.values):
+            worksheet.write(0, col_num, value, header_format)
+            worksheet.set_column(col_num, col_num, 18)
+            worksheet.write(1, col_num, df.iloc[0, col_num], example_format)
+        
+        # Agregar instrucciones en otra hoja
+        instrucciones = pd.DataFrame({
+            'INSTRUCCIONES': [
+                '1. Completá la hoja "Productos" con tus datos',
+                '2. Campos OBLIGATORIOS: nombre, categoria, precio_compra',
+                '3. Los demás campos son opcionales',
+                '4. Si la categoría no existe, se creará automáticamente',
+                '5. Si el proveedor no existe, se creará automáticamente',
+                '6. Borrá la fila de ejemplo antes de importar',
+                '7. La fecha debe estar en formato YYYY-MM-DD (ej: 2024-02-18)',
+                '8. Unidades válidas: Unidad, kg, gr, ltr, ml, pack, caja, docena',
+                '',
+                'IMPORTANTE: No cambies los nombres de las columnas'
+            ]
+        })
+        instrucciones.to_excel(writer, sheet_name='LEER PRIMERO', index=False)
+        worksheet_inst = writer.sheets['LEER PRIMERO']
+        worksheet_inst.set_column(0, 0, 60)
+    
+    return output.getvalue()
+
+def validar_fila_importacion(fila, categorias_existentes, proveedores_existentes):
+    """Valida una fila del Excel de importación"""
+    errores = []
+    
+    # Validar campos obligatorios
+    if pd.isna(fila.get('nombre')) or str(fila.get('nombre')).strip() == '':
+        errores.append("Nombre es obligatorio")
+    
+    if pd.isna(fila.get('categoria')) or str(fila.get('categoria')).strip() == '':
+        errores.append("Categoría es obligatoria")
+    
+    if pd.isna(fila.get('precio_compra')):
+        errores.append("Precio de compra es obligatorio")
+    else:
+        try:
+            float(fila.get('precio_compra'))
+        except:
+            errores.append("Precio de compra debe ser un número")
+    
+    # Validar stock si está presente
+    if not pd.isna(fila.get('stock_inicial')):
+        try:
+            int(fila.get('stock_inicial'))
+        except:
+            errores.append("Stock inicial debe ser un número entero")
+    
+    return errores
+
+def procesar_importacion_productos(df, usuario_id):
+    """Procesa el DataFrame del Excel y carga los productos"""
+    resultados = {
+        'exitosos': 0,
+        'errores': 0,
+        'detalles': [],
+        'categorias_creadas': [],
+        'proveedores_creados': []
+    }
+    
+    # Obtener categorías y proveedores existentes
+    categorias_existentes = obtener_categorias()
+    proveedores_existentes = obtener_proveedores()
+    
+    # Mapeos nombre -> id
+    cat_map = {cat['nombre'].lower(): cat['id'] for _, cat in categorias_existentes.iterrows()} if not categorias_existentes.empty else {}
+    prov_map = {prov['nombre'].lower(): prov['id'] for _, prov in proveedores_existentes.iterrows()} if not proveedores_existentes.empty else {}
+    
+    for idx, fila in df.iterrows():
+        # Saltar filas vacías
+        if pd.isna(fila.get('nombre')):
+            continue
+        
+        # Validar fila
+        errores = validar_fila_importacion(fila, categorias_existentes, proveedores_existentes)
+        if errores:
+            resultados['errores'] += 1
+            resultados['detalles'].append(f"Fila {idx + 2}: {', '.join(errores)}")
+            continue
+        
+        try:
+            # Procesar categoría
+            categoria_nombre = str(fila['categoria']).strip()
+            if categoria_nombre.lower() not in cat_map:
+                # Crear categoría nueva
+                nueva_cat = crear_categoria(categoria_nombre, "")
+                if nueva_cat:
+                    cat_map[categoria_nombre.lower()] = nueva_cat[0]['id']
+                    resultados['categorias_creadas'].append(categoria_nombre)
+            
+            categoria_id = cat_map.get(categoria_nombre.lower())
+            
+            # Procesar proveedor (opcional)
+            proveedor_id = None
+            if not pd.isna(fila.get('proveedor')) and str(fila.get('proveedor')).strip() != '':
+                proveedor_nombre = str(fila['proveedor']).strip()
+                if proveedor_nombre.lower() not in prov_map:
+                    # Crear proveedor nuevo
+                    nuevo_prov = crear_proveedor({'nombre': proveedor_nombre})
+                    if nuevo_prov:
+                        prov_map[proveedor_nombre.lower()] = nuevo_prov[0]['id']
+                        resultados['proveedores_creados'].append(proveedor_nombre)
+                
+                proveedor_id = prov_map.get(proveedor_nombre.lower())
+            
+            # Generar código
+            nombre_producto = str(fila['nombre']).strip()
+            codigo = generar_codigo_producto(nombre_producto, categoria_nombre)
+            
+            # Preparar datos del producto
+            producto_data = {
+                'codigo': codigo,
+                'nombre': nombre_producto,
+                'categoria_id': categoria_id,
+                'proveedor_id': proveedor_id,
+                'marca': str(fila['marca']).strip() if not pd.isna(fila.get('marca')) else None,
+                'variedad': str(fila['variedad']).strip() if not pd.isna(fila.get('variedad')) else None,
+                'presentacion': str(fila['presentacion']).strip() if not pd.isna(fila.get('presentacion')) else None,
+                'unidad': str(fila['unidad']).strip() if not pd.isna(fila.get('unidad')) else 'Unidad',
+                'ubicacion': str(fila['ubicacion']).strip() if not pd.isna(fila.get('ubicacion')) else None,
+                'detalle': str(fila['detalle']).strip() if not pd.isna(fila.get('detalle')) else None,
+                'precio_compra': float(fila['precio_compra']),
+                'precio_venta': float(fila['precio_compra']) * 1.3,  # Margen 30% por defecto
+                'stock_actual': int(fila['stock_inicial']) if not pd.isna(fila.get('stock_inicial')) else 0,
+                'stock_minimo': int(fila['stock_minimo']) if not pd.isna(fila.get('stock_minimo')) else 0,
+                'usuario_id': usuario_id
+            }
+            
+            # Crear producto
+            crear_producto(producto_data)
+            
+            # Si tiene stock y fecha de compra, registrar la compra
+            if producto_data['stock_actual'] > 0:
+                fecha_compra = str(fila['fecha_compra']) if not pd.isna(fila.get('fecha_compra')) else str(datetime.now().date())
+                # Obtener el producto recién creado para registrar compra
+                productos = obtener_productos(activos_solo=False)
+                if not productos.empty:
+                    producto_creado = productos[productos['codigo'] == codigo].iloc[0]
+                    registrar_compra({
+                        'producto_id': producto_creado['id'],
+                        'cantidad': producto_data['stock_actual'],
+                        'precio_unitario': producto_data['precio_compra'],
+                        'fecha': fecha_compra,
+                        'usuario_id': usuario_id
+                    })
+            
+            resultados['exitosos'] += 1
+            resultados['detalles'].append(f"✅ {nombre_producto} ({codigo})")
+            
+        except Exception as e:
+            resultados['errores'] += 1
+            resultados['detalles'].append(f"❌ Fila {idx + 2} ({fila.get('nombre', 'Sin nombre')}): {str(e)}")
+    
+    return resultados
+
 # --- COMPRAS ---
 def registrar_compra(datos):
     usuario = obtener_usuario_actual()
@@ -484,7 +685,7 @@ def pagina_dashboard():
 
 def pagina_productos():
     st.title("📦 Gestión de Productos")
-    tab1, tab2, tab3 = st.tabs(["📋 Lista", "➕ Nuevo", "✏️ Editar/Eliminar"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📋 Lista", "➕ Nuevo", "📤 Importación Masiva", "✏️ Editar/Eliminar"])
     
     with tab1:
         productos = obtener_productos()
@@ -556,6 +757,8 @@ def pagina_productos():
                 marca = st.text_input("Marca")
                 variedad = st.text_input("Variedad")
                 presentacion = st.text_input("Presentación")
+                unidad = st.selectbox("Unidad", ["Unidad", "kg", "gr", "ltr", "ml", "pack", "caja", "docena"])
+                ubicacion = st.text_input("Ubicación Física")
             
             detalle = st.text_area("Detalle / Otro")
             
@@ -589,6 +792,8 @@ def pagina_productos():
                         'marca': marca if marca else None,
                         'variedad': variedad if variedad else None,
                         'presentacion': presentacion if presentacion else None,
+                        'unidad': unidad if unidad else 'Unidad',
+                        'ubicacion': ubicacion if ubicacion else None,
                         'detalle': detalle if detalle else None,
                         'precio_compra': precio_compra,
                         'precio_venta': precio_venta,
@@ -600,6 +805,94 @@ def pagina_productos():
                     st.error("Completá los campos obligatorios (*)")
     
     with tab3:
+        st.subheader("📤 Importación Masiva de Productos")
+        
+        st.info("""
+        **¿Cómo funciona?**
+        1. Descargá el template de Excel
+        2. Completalo con tus productos
+        3. Subí el archivo y revisá el preview
+        4. Confirmá la importación
+        
+        ✨ Las categorías y proveedores que no existan se crearán automáticamente
+        """)
+        
+        col1, col2 = st.columns([1, 2])
+        
+        with col1:
+            st.download_button(
+                label="📥 Descargar Template Excel",
+                data=generar_template_importacion(),
+                file_name=f"template_productos_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary"
+            )
+        
+        with col2:
+            st.write("**Campos obligatorios:**")
+            st.write("• Nombre del producto")
+            st.write("• Categoría")  
+            st.write("• Precio de compra")
+        
+        st.divider()
+        
+        # Subir archivo
+        archivo_subido = st.file_uploader(
+            "Subí tu archivo Excel completado",
+            type=['xlsx', 'xls'],
+            help="El archivo debe tener las mismas columnas que el template"
+        )
+        
+        if archivo_subido:
+            try:
+                # Leer el Excel
+                df = pd.read_excel(archivo_subido, sheet_name='Productos')
+                
+                # Mostrar preview
+                st.success(f"✅ Archivo cargado: {len(df)} filas detectadas")
+                
+                with st.expander("👀 Ver preview de los datos", expanded=True):
+                    st.dataframe(df.head(10), use_container_width=True)
+                    if len(df) > 10:
+                        st.caption(f"Mostrando las primeras 10 filas de {len(df)} totales")
+                
+                # Botón para procesar
+                if st.button("🚀 Importar Productos", type="primary"):
+                    usuario = obtener_usuario_actual()
+                    
+                    with st.spinner("Procesando importación..."):
+                        resultados = procesar_importacion_productos(df, usuario['id'])
+                    
+                    # Mostrar resultados
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.metric("✅ Productos creados", resultados['exitosos'])
+                    with col2:
+                        st.metric("❌ Errores", resultados['errores'])
+                    
+                    if resultados['categorias_creadas']:
+                        st.success(f"🏷️ Categorías creadas: {', '.join(resultados['categorias_creadas'])}")
+                    
+                    if resultados['proveedores_creados']:
+                        st.success(f"👥 Proveedores creados: {', '.join(resultados['proveedores_creados'])}")
+                    
+                    # Mostrar detalles
+                    with st.expander("📋 Ver detalles de la importación"):
+                        for detalle in resultados['detalles']:
+                            st.write(detalle)
+                    
+                    if resultados['exitosos'] > 0:
+                        st.balloons()
+                        st.success(f"🎉 Importación completada! {resultados['exitosos']} productos agregados")
+                    
+                    if resultados['errores'] > 0:
+                        st.warning(f"⚠️ {resultados['errores']} filas tuvieron errores. Revisá los detalles arriba.")
+                
+            except Exception as e:
+                st.error(f"Error al leer el archivo: {str(e)}")
+                st.info("Asegurate de que el archivo tenga una hoja llamada 'Productos' con las columnas correctas")
+    
+    with tab4:
         productos = obtener_productos(activos_solo=True)  # Solo productos activos
         if productos.empty:
             st.info("No hay productos para editar")
