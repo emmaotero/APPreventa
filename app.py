@@ -1625,4 +1625,4 @@ def main():
         pagina_categorias()
 
 if __name__ == "__main__":
-    main()
+    main()main()
