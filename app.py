@@ -350,7 +350,6 @@ def procesar_importacion_productos(df, usuario_id):
                 'ubicacion': str(fila['ubicacion']).strip() if not pd.isna(fila.get('ubicacion')) else None,
                 'detalle': str(fila['detalle']).strip() if not pd.isna(fila.get('detalle')) else None,
                 'precio_compra': float(fila['precio_compra']),
-                'precio_venta': float(fila['precio_compra']) * 1.3,  # Margen 30% por defecto
                 'stock_actual': int(fila['stock_inicial']) if not pd.isna(fila.get('stock_inicial')) else 0,
                 'stock_minimo': int(fila['stock_minimo']) if not pd.isna(fila.get('stock_minimo')) else 0,
                 'usuario_id': usuario_id
@@ -573,6 +572,82 @@ def actualizar_costo_fijo(id_costo, datos):
 def eliminar_costo_fijo(id_costo):
     return supabase.table("costos_fijos").update({"activo": False}).eq("id", id_costo).execute().data
 
+# --- LISTA DE PRECIOS ---
+def obtener_lista_precios():
+    """Obtiene lista de precios con datos calculados"""
+    usuario = obtener_usuario_actual()
+    if not usuario:
+        return pd.DataFrame()
+    
+    # Obtener productos activos
+    productos = obtener_productos(activos_solo=True)
+    if productos.empty:
+        return pd.DataFrame()
+    
+    # Obtener lista de precios existente
+    response = supabase.table("lista_precios").select("*").eq("usuario_id", usuario['id']).execute()
+    lista_precios = pd.DataFrame(response.data) if response.data else pd.DataFrame()
+    
+    # Crear DataFrame con todos los productos
+    resultado = []
+    for _, prod in productos.iterrows():
+        precio_costo = float(prod['precio_compra'])
+        
+        # Buscar si tiene precio en lista
+        if not lista_precios.empty and prod['id'] in lista_precios['producto_id'].values:
+            precio_data = lista_precios[lista_precios['producto_id'] == prod['id']].iloc[0]
+            margen_teorico = float(precio_data['margen_teorico'])
+            precio_final = float(precio_data['precio_final']) if precio_data['precio_final'] else None
+        else:
+            margen_teorico = 30.0  # Default
+            precio_final = None
+        
+        # Calcular precio sugerido
+        precio_sugerido = round(precio_costo * (1 + margen_teorico / 100), 2)
+        
+        # Calcular margen real si hay precio final
+        if precio_final:
+            margen_real = round(((precio_final - precio_costo) / precio_costo) * 100, 2) if precio_costo > 0 else 0
+        else:
+            margen_real = margen_teorico
+            precio_final = precio_sugerido
+        
+        resultado.append({
+            'producto_id': prod['id'],
+            'codigo': prod['codigo'],
+            'nombre': prod['nombre'],
+            'precio_costo': precio_costo,
+            'margen_teorico': margen_teorico,
+            'precio_sugerido': precio_sugerido,
+            'precio_final': precio_final,
+            'margen_real': margen_real
+        })
+    
+    return pd.DataFrame(resultado)
+
+def guardar_precio(producto_id, margen_teorico, precio_final):
+    """Guarda o actualiza el precio de un producto"""
+    usuario = obtener_usuario_actual()
+    if not usuario:
+        return None
+    
+    # Verificar si ya existe
+    response = supabase.table("lista_precios").select("*").eq("producto_id", producto_id).eq("usuario_id", usuario['id']).execute()
+    
+    datos = {
+        'margen_teorico': margen_teorico,
+        'precio_final': precio_final
+    }
+    
+    if response.data and len(response.data) > 0:
+        # Actualizar
+        return supabase.table("lista_precios").update(datos).eq("producto_id", producto_id).eq("usuario_id", usuario['id']).execute().data
+    else:
+        # Crear
+        datos['producto_id'] = producto_id
+        datos['usuario_id'] = usuario['id']
+        return supabase.table("lista_precios").insert(datos).execute().data
+
 def calcular_costos_mes_actual():
     """Calcula el total de costos fijos del mes actual"""
     costos = obtener_costos_fijos()
@@ -632,7 +707,8 @@ def obtener_ventas_por_producto():
 def obtener_metricas_dashboard():
     productos = obtener_productos()
     total_productos = len(productos)
-    valor_stock = (productos['stock_actual'] * productos['precio_venta']).sum() if not productos.empty else 0
+    # Valor de stock a precio de costo
+    valor_stock = (productos['stock_actual'] * productos['precio_compra']).sum() if not productos.empty else 0
     
     hoy = datetime.now().date()
     inicio_mes = hoy.replace(day=1)
@@ -771,7 +847,7 @@ def pagina_dashboard():
         )
 
 def pagina_productos():
-    st.title("📦 Gestión de Productos")
+    st.title("📦 Gestión de Stock")
     tab1, tab2, tab3, tab4 = st.tabs(["📋 Lista", "➕ Nuevo", "📤 Importación Masiva", "✏️ Editar/Eliminar"])
     
     with tab1:
@@ -785,10 +861,9 @@ def pagina_productos():
                 lambda x: x['nombre'] if x else 'Sin proveedor'
             )
             
-            # Mostrar con código y campos adicionales
+            # Mostrar con código y campos adicionales (sin precio_venta ni margen)
             columnas_mostrar = ['codigo', 'nombre', 'marca', 'variedad', 'presentacion', 
-                              'categoria', 'proveedor', 'stock_actual', 'precio_compra', 
-                              'precio_venta', 'margen_porcentaje']
+                              'categoria', 'proveedor', 'stock_actual', 'precio_compra', 'unidad']
             
             st.dataframe(
                 productos_display[columnas_mostrar],
@@ -803,9 +878,8 @@ def pagina_productos():
                     "categoria": "Categoría",
                     "proveedor": "Proveedor",
                     "stock_actual": "Stock",
-                    "precio_compra": st.column_config.NumberColumn("P. Compra", format="$%.2f"),
-                    "precio_venta": st.column_config.NumberColumn("P. Venta", format="$%.2f"),
-                    "margen_porcentaje": st.column_config.NumberColumn("Margen %", format="%.1f%%")
+                    "precio_compra": st.column_config.NumberColumn("Precio Costo", format="$%.2f"),
+                    "unidad": "Unidad"
                 }
             )
             
@@ -852,13 +926,12 @@ def pagina_productos():
             st.divider()
             st.subheader("Precios y Stock")
             
-            col1, col2, col3 = st.columns(3)
+            col1, col2 = st.columns(2)
             with col1:
-                precio_compra = st.number_input("Precio Compra *", min_value=0.0, step=0.01)
-            with col2:
-                precio_venta = st.number_input("Precio Venta *", min_value=0.0, step=0.01)
-            with col3:
+                precio_compra = st.number_input("Precio Costo *", min_value=0.0, step=0.01)
                 stock_inicial = st.number_input("Stock Inicial", min_value=0, step=1)
+            with col2:
+                stock_minimo = st.number_input("Stock Mínimo", min_value=0, step=1, value=0)
             
             # Mostrar código que se generará
             if nombre and categoria_id:
@@ -896,8 +969,8 @@ def pagina_productos():
                         'ubicacion': ubicacion if ubicacion else None,
                         'detalle': detalle if detalle else None,
                         'precio_compra': precio_compra,
-                        'precio_venta': precio_venta,
-                        'stock_actual': stock_inicial
+                        'stock_actual': stock_inicial,
+                        'stock_minimo': stock_minimo
                     })
                     st.success(f"✅ Producto '{nombre}' creado con código {codigo_generado}")
                     st.rerun()
@@ -1085,8 +1158,7 @@ def pagina_productos():
                     
                     col_a, col_b = st.columns(2)
                     with col_a:
-                        nuevo_precio_compra = st.number_input("Precio Compra", value=float(prod['precio_compra']), step=0.01)
-                        nuevo_precio_venta = st.number_input("Precio Venta", value=float(prod['precio_venta']), step=0.01)
+                        nuevo_precio_compra = st.number_input("Precio Costo", value=float(prod['precio_compra']), step=0.01)
                     with col_b:
                         nuevo_stock_minimo = st.number_input("Stock Mínimo", value=int(prod['stock_minimo']), step=1)
                     
@@ -1116,7 +1188,6 @@ def pagina_productos():
                                 'ubicacion': nueva_ubicacion if nueva_ubicacion else None,
                                 'detalle': nuevo_detalle if nuevo_detalle else None,
                                 'precio_compra': nuevo_precio_compra,
-                                'precio_venta': nuevo_precio_venta,
                                 'stock_minimo': nuevo_stock_minimo
                             })
                         else:
@@ -1131,7 +1202,6 @@ def pagina_productos():
                                 'ubicacion': nueva_ubicacion if nueva_ubicacion else None,
                                 'detalle': nuevo_detalle if nuevo_detalle else None,
                                 'precio_compra': nuevo_precio_compra,
-                                'precio_venta': nuevo_precio_venta,
                                 'stock_minimo': nuevo_stock_minimo
                             })
                         
@@ -1578,6 +1648,93 @@ def pagina_categorias():
                     st.success("✅ Categoría eliminada")
                     st.rerun()
 
+def pagina_lista_precios():
+    st.title("💰 Lista de Precios")
+    
+    st.info("""
+    **¿Cómo funciona?**
+    - **Margen Teórico %**: El margen que querés aplicar (editable)
+    - **Precio Sugerido**: Se calcula automáticamente (Costo × (1 + Margen%))
+    - **Precio Final**: El precio que vas a cobrar (editable)
+    - **Margen Real %**: Se calcula automáticamente según el precio final
+    """)
+    
+    lista = obtener_lista_precios()
+    
+    if lista.empty:
+        st.warning("No hay productos en stock. Primero cargá productos.")
+        return
+    
+    # Configurar columnas editables
+    columnas_config = {
+        'codigo': st.column_config.TextColumn("Código", disabled=True, width="small"),
+        'nombre': st.column_config.TextColumn("Producto", disabled=True, width="large"),
+        'precio_costo': st.column_config.NumberColumn("Precio Costo", disabled=True, format="$%.2f", width="small"),
+        'margen_teorico': st.column_config.NumberColumn("Margen Teórico %", min_value=0, max_value=500, step=1, format="%.1f%%", width="small"),
+        'precio_sugerido': st.column_config.NumberColumn("Precio Sugerido", disabled=True, format="$%.2f", width="small"),
+        'precio_final': st.column_config.NumberColumn("Precio Final", min_value=0, step=0.01, format="$%.2f", width="small"),
+        'margen_real': st.column_config.NumberColumn("Margen Real %", disabled=True, format="%.2f%%", width="small")
+    }
+    
+    # Mostrar tabla editable
+    edited_df = st.data_editor(
+        lista,
+        column_config=columnas_config,
+        hide_index=True,
+        use_container_width=True,
+        num_rows="fixed",
+        key="editor_precios"
+    )
+    
+    # Botón para guardar cambios
+    col1, col2 = st.columns([1, 4])
+    with col1:
+        if st.button("💾 Guardar Cambios", type="primary"):
+            try:
+                # Detectar cambios
+                cambios = 0
+                for idx, row in edited_df.iterrows():
+                    row_original = lista.iloc[idx]
+                    
+                    # Verificar si hubo cambios
+                    if (row['margen_teorico'] != row_original['margen_teorico'] or 
+                        row['precio_final'] != row_original['precio_final']):
+                        
+                        # Guardar
+                        guardar_precio(row['producto_id'], row['margen_teorico'], row['precio_final'])
+                        cambios += 1
+                
+                if cambios > 0:
+                    st.success(f"✅ {cambios} precio(s) actualizado(s)")
+                    st.rerun()
+                else:
+                    st.info("No se detectaron cambios")
+            except Exception as e:
+                st.error(f"Error al guardar: {str(e)}")
+    
+    # Botón para descargar
+    with col2:
+        st.download_button(
+            label="📥 Descargar Lista de Precios (Excel)",
+            data=to_excel(edited_df[['codigo', 'nombre', 'precio_costo', 'margen_teorico', 
+                                     'precio_sugerido', 'precio_final', 'margen_real']], "Lista de Precios"),
+            file_name=f"lista_precios_{datetime.now().strftime('%Y%m%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    
+    # Estadísticas
+    st.divider()
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        margen_promedio = edited_df['margen_real'].mean()
+        st.metric("Margen Promedio", f"{margen_promedio:.1f}%")
+    with col2:
+        precio_max = edited_df['precio_final'].max()
+        st.metric("Precio Más Alto", formato_moneda(precio_max))
+    with col3:
+        precio_min = edited_df['precio_final'].min()
+        st.metric("Precio Más Bajo", formato_moneda(precio_min))
+
 # ============================================
 # NAVEGACIÓN PRINCIPAL
 # ============================================
@@ -1598,7 +1755,7 @@ def main():
         
         pagina = st.radio(
             "Navegación",
-            ["📊 Dashboard", "📦 Productos", "🛒 Compras", "💰 Ventas", "💸 Costos Fijos", "👥 Proveedores", "🏷️ Categorías"],
+            ["📊 Dashboard", "📦 Stock", "💰 Lista de Precios", "🛒 Compras", "💵 Ventas", "💸 Costos Fijos", "👥 Proveedores", "🏷️ Categorías"],
             label_visibility="collapsed"
         )
         
@@ -1611,11 +1768,13 @@ def main():
     
     if pagina == "📊 Dashboard":
         pagina_dashboard()
-    elif pagina == "📦 Productos":
+    elif pagina == "📦 Stock":
         pagina_productos()
+    elif pagina == "💰 Lista de Precios":
+        pagina_lista_precios()
     elif pagina == "🛒 Compras":
         pagina_compras()
-    elif pagina == "💰 Ventas":
+    elif pagina == "💵 Ventas":
         pagina_ventas()
     elif pagina == "💸 Costos Fijos":
         pagina_costos_fijos()
