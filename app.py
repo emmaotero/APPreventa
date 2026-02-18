@@ -256,9 +256,9 @@ def procesar_importacion_productos(df, usuario_id):
     categorias_existentes = obtener_categorias()
     proveedores_existentes = obtener_proveedores()
     
-    # Mapeos nombre -> id
-    cat_map = {cat['nombre'].lower(): cat['id'] for _, cat in categorias_existentes.iterrows()} if not categorias_existentes.empty else {}
-    prov_map = {prov['nombre'].lower(): prov['id'] for _, prov in proveedores_existentes.iterrows()} if not proveedores_existentes.empty else {}
+    # Mapeos nombre -> id (usar nombre completo como clave)
+    cat_map = {cat['nombre']: cat['id'] for _, cat in categorias_existentes.iterrows()} if not categorias_existentes.empty else {}
+    prov_map = {prov['nombre']: prov['id'] for _, prov in proveedores_existentes.iterrows()} if not proveedores_existentes.empty else {}
     
     for idx, fila in df.iterrows():
         # Saltar filas vacías
@@ -275,19 +275,33 @@ def procesar_importacion_productos(df, usuario_id):
         try:
             # Procesar categoría
             categoria_nombre = str(fila['categoria']).strip()
-            if categoria_nombre.lower() not in cat_map:
-                # Crear categoría nueva
+            
+            # Buscar si ya existe en el mapa (case-insensitive para evitar duplicados)
+            categoria_id = None
+            for nombre_existente, id_existente in cat_map.items():
+                if nombre_existente.upper() == categoria_nombre.upper():
+                    categoria_id = id_existente
+                    break
+            
+            # Si no existe, crearla
+            if not categoria_id:
                 nueva_cat = crear_categoria(categoria_nombre, "")
                 if nueva_cat:
                     cat_id = nueva_cat[0]['id']
                     cat_codigo = nueva_cat[0].get('codigo_categoria', '')
-                    cat_map[categoria_nombre.lower()] = cat_id
+                    cat_map[categoria_nombre] = cat_id  # Agregar al mapa con nombre exacto
+                    categoria_id = cat_id
                     resultados['categorias_creadas'].append(categoria_nombre)
-            
-            categoria_id = cat_map.get(categoria_nombre.lower())
+                    
+                    # Recargar categorías para tener la nueva
+                    categorias_existentes = obtener_categorias()
             
             # Obtener código de categoría
-            cat_actual = categorias_existentes[categorias_existentes['id']==categoria_id].iloc[0] if not categorias_existentes.empty and categoria_id in categorias_existentes['id'].values else None
+            cat_actual = None
+            for _, cat in categorias_existentes.iterrows():
+                if cat['id'] == categoria_id:
+                    cat_actual = cat
+                    break
             
             if cat_actual is not None:
                 codigo_cat = cat_actual.get('codigo_categoria', '')
@@ -296,23 +310,28 @@ def procesar_importacion_productos(df, usuario_id):
                     codigo_cat = generar_codigo_categoria(categoria_nombre, categorias_existentes)
                     actualizar_categoria(categoria_id, {'codigo_categoria': codigo_cat})
             else:
-                # Recargar categorías para obtener la recién creada
-                categorias_existentes = obtener_categorias()
-                cat_actual = categorias_existentes[categorias_existentes['id']==categoria_id].iloc[0]
-                codigo_cat = cat_actual.get('codigo_categoria', generar_codigo_categoria(categoria_nombre, categorias_existentes))
+                # Si por alguna razón no encontramos la categoría, generamos código genérico
+                codigo_cat = generar_codigo_categoria(categoria_nombre, categorias_existentes)
             
             # Procesar proveedor (opcional)
             proveedor_id = None
             if not pd.isna(fila.get('proveedor')) and str(fila.get('proveedor')).strip() != '':
                 proveedor_nombre = str(fila['proveedor']).strip()
-                if proveedor_nombre.lower() not in prov_map:
-                    # Crear proveedor nuevo
+                
+                # Buscar si ya existe (case-insensitive)
+                for nombre_existente, id_existente in prov_map.items():
+                    if nombre_existente.upper() == proveedor_nombre.upper():
+                        proveedor_id = id_existente
+                        break
+                
+                # Si no existe, crearlo
+                if not proveedor_id:
                     nuevo_prov = crear_proveedor({'nombre': proveedor_nombre})
                     if nuevo_prov:
-                        prov_map[proveedor_nombre.lower()] = nuevo_prov[0]['id']
+                        prov_id = nuevo_prov[0]['id']
+                        prov_map[proveedor_nombre] = prov_id
+                        proveedor_id = prov_id
                         resultados['proveedores_creados'].append(proveedor_nombre)
-                
-                proveedor_id = prov_map.get(proveedor_nombre.lower())
             
             # Generar código con el código de categoría
             nombre_producto = str(fila['nombre']).strip()
