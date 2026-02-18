@@ -279,10 +279,27 @@ def procesar_importacion_productos(df, usuario_id):
                 # Crear categoría nueva
                 nueva_cat = crear_categoria(categoria_nombre, "")
                 if nueva_cat:
-                    cat_map[categoria_nombre.lower()] = nueva_cat[0]['id']
+                    cat_id = nueva_cat[0]['id']
+                    cat_codigo = nueva_cat[0].get('codigo_categoria', '')
+                    cat_map[categoria_nombre.lower()] = cat_id
                     resultados['categorias_creadas'].append(categoria_nombre)
             
             categoria_id = cat_map.get(categoria_nombre.lower())
+            
+            # Obtener código de categoría
+            cat_actual = categorias_existentes[categorias_existentes['id']==categoria_id].iloc[0] if not categorias_existentes.empty and categoria_id in categorias_existentes['id'].values else None
+            
+            if cat_actual is not None:
+                codigo_cat = cat_actual.get('codigo_categoria', '')
+                if not codigo_cat:
+                    # Generar código para la categoría
+                    codigo_cat = generar_codigo_categoria(categoria_nombre, categorias_existentes)
+                    actualizar_categoria(categoria_id, {'codigo_categoria': codigo_cat})
+            else:
+                # Recargar categorías para obtener la recién creada
+                categorias_existentes = obtener_categorias()
+                cat_actual = categorias_existentes[categorias_existentes['id']==categoria_id].iloc[0]
+                codigo_cat = cat_actual.get('codigo_categoria', generar_codigo_categoria(categoria_nombre, categorias_existentes))
             
             # Procesar proveedor (opcional)
             proveedor_id = None
@@ -297,9 +314,9 @@ def procesar_importacion_productos(df, usuario_id):
                 
                 proveedor_id = prov_map.get(proveedor_nombre.lower())
             
-            # Generar código
+            # Generar código con el código de categoría
             nombre_producto = str(fila['nombre']).strip()
-            codigo = generar_codigo_producto(nombre_producto, categoria_nombre)
+            codigo = generar_codigo_producto(nombre_producto, codigo_cat)
             
             # Preparar datos del producto
             producto_data = {
@@ -405,9 +422,17 @@ def crear_categoria(nombre, descripcion=""):
     usuario = obtener_usuario_actual()
     if not usuario:
         return None
+    
+    # Obtener categorías existentes para evitar duplicados de código
+    categorias_existentes = obtener_categorias()
+    
+    # Generar código único
+    codigo_categoria = generar_codigo_categoria(nombre, categorias_existentes)
+    
     return supabase.table("categorias").insert({
         "nombre": nombre, 
         "descripcion": descripcion,
+        "codigo_categoria": codigo_categoria,
         "usuario_id": usuario['id']
     }).execute().data
 
@@ -417,32 +442,75 @@ def actualizar_categoria(id_categoria, datos):
 def eliminar_categoria(id_categoria):
     return supabase.table("categorias").delete().eq("id", id_categoria).execute().data
 
-def generar_codigo_producto(nombre_producto, categoria_nombre):
-    """Genera código único del producto: PAPHIG-PAP-0001"""
+def generar_codigo_categoria(nombre_categoria, categorias_existentes):
+    """Genera código de categoría único tomando letras significativas"""
+    # Limpiar y separar palabras
+    palabras = nombre_categoria.upper().replace('-', ' ').replace('_', ' ').split()
+    
+    # Filtrar palabras comunes poco significativas
+    palabras_ignorar = ['PARA', 'DE', 'LA', 'EL', 'LOS', 'LAS', 'Y', 'A', 'EN']
+    palabras_significativas = [p for p in palabras if p not in palabras_ignorar and len(p) > 1]
+    
+    if not palabras_significativas:
+        palabras_significativas = palabras
+    
+    # Estrategia 1: Primeras 2-3 letras de las primeras 2 palabras más significativas
+    if len(palabras_significativas) >= 2:
+        codigo = palabras_significativas[0][:3] + palabras_significativas[1][:3]
+    elif len(palabras_significativas) == 1:
+        codigo = palabras_significativas[0][:6]
+    else:
+        codigo = ''.join(palabras)[:6]
+    
+    codigo = codigo.upper()
+    
+    # Verificar si ya existe en categorías del usuario
+    codigos_existentes = []
+    if not categorias_existentes.empty:
+        for _, cat in categorias_existentes.iterrows():
+            if 'codigo_categoria' in cat and cat['codigo_categoria']:
+                codigos_existentes.append(cat['codigo_categoria'].upper())
+    
+    # Si el código ya existe, agregar más letras
+    if codigo in codigos_existentes:
+        # Intentar con más caracteres
+        for longitud in range(len(codigo) + 1, 10):
+            texto_completo = ''.join(palabras_significativas)
+            nuevo_codigo = texto_completo[:longitud].upper()
+            if nuevo_codigo not in codigos_existentes:
+                codigo = nuevo_codigo
+                break
+        
+        # Si aún así hay conflicto, agregar número
+        if codigo in codigos_existentes:
+            contador = 1
+            while f"{codigo}{contador}" in codigos_existentes:
+                contador += 1
+            codigo = f"{codigo}{contador}"
+    
+    return codigo[:8]  # Máximo 8 caracteres
+
+def generar_codigo_producto(nombre_producto, codigo_categoria):
+    """Genera código único del producto: TABNAT-0001"""
     usuario = obtener_usuario_actual()
     if not usuario:
         return None
     
-    # Obtener primeras 6 letras del producto (sin espacios, mayúsculas)
-    prod_code = ''.join(nombre_producto.split()).upper()[:6]
-    
-    # Obtener primeras 3 letras de la categoría
-    cat_code = ''.join(categoria_nombre.split()).upper()[:3]
-    
     # Obtener productos de esa categoría para el contador
     productos_cat = obtener_productos(activos_solo=False)
-    if not productos_cat.empty:
-        # Filtrar por categoría
-        productos_cat['cat_nombre'] = productos_cat['categorias'].apply(
-            lambda x: x['nombre'] if x else ''
-        )
-        productos_misma_cat = productos_cat[productos_cat['cat_nombre'] == categoria_nombre]
-        contador = len(productos_misma_cat) + 1
+    
+    if not productos_cat.empty and 'categorias' in productos_cat.columns:
+        # Filtrar por categorías que tengan el mismo código
+        contador = 0
+        for _, prod in productos_cat.iterrows():
+            if prod.get('codigo') and prod['codigo'].startswith(codigo_categoria + '-'):
+                contador += 1
+        contador += 1
     else:
         contador = 1
     
-    # Formato: PAPHIG-PAP-0001
-    codigo = f"{prod_code}-{cat_code}-{contador:04d}"
+    # Formato: TABNAT-0001
+    codigo = f"{codigo_categoria}-{contador:04d}"
     
     return codigo
 
@@ -775,14 +843,27 @@ def pagina_productos():
             
             # Mostrar código que se generará
             if nombre and categoria_id:
-                cat_nombre = categorias[categorias['id']==categoria_id]['nombre'].values[0]
-                codigo_preview = generar_codigo_producto(nombre, cat_nombre)
-                st.info(f"📋 Código que se asignará: **{codigo_preview}**")
+                cat_seleccionada = categorias[categorias['id']==categoria_id].iloc[0]
+                codigo_cat = cat_seleccionada.get('codigo_categoria', '')
+                if not codigo_cat:
+                    # Si la categoría no tiene código, generarlo
+                    cat_nombre = cat_seleccionada['nombre']
+                    codigo_cat = generar_codigo_categoria(cat_nombre, categorias)
+                codigo_preview = f"{codigo_cat}-0001"
+                st.info(f"📋 Código que se asignará: **{codigo_preview}** (aproximado)")
             
             if st.form_submit_button("✅ Crear Producto"):
                 if nombre and categoria_id:
-                    cat_nombre = categorias[categorias['id']==categoria_id]['nombre'].values[0]
-                    codigo_generado = generar_codigo_producto(nombre, cat_nombre)
+                    cat_seleccionada = categorias[categorias['id']==categoria_id].iloc[0]
+                    codigo_cat = cat_seleccionada.get('codigo_categoria', '')
+                    
+                    if not codigo_cat:
+                        # Si la categoría no tiene código, generarlo y actualizarla
+                        cat_nombre = cat_seleccionada['nombre']
+                        codigo_cat = generar_codigo_categoria(cat_nombre, categorias)
+                        actualizar_categoria(categoria_id, {'codigo_categoria': codigo_cat})
+                    
+                    codigo_generado = generar_codigo_producto(nombre, codigo_cat)
                     
                     crear_producto({
                         'codigo': codigo_generado,
@@ -968,6 +1049,17 @@ def pagina_productos():
                     nueva_marca = st.text_input("Marca", value=prod['marca'] if prod['marca'] else "")
                     nueva_variedad = st.text_input("Variedad", value=prod['variedad'] if prod['variedad'] else "")
                     nueva_presentacion = st.text_input("Presentación", value=prod['presentacion'] if prod['presentacion'] else "")
+                    
+                    col_x, col_y = st.columns(2)
+                    with col_x:
+                        nueva_unidad = st.selectbox(
+                            "Unidad", 
+                            ["Unidad", "kg", "gr", "ltr", "ml", "pack", "caja", "docena"],
+                            index=["Unidad", "kg", "gr", "ltr", "ml", "pack", "caja", "docena"].index(prod['unidad']) if prod.get('unidad') in ["Unidad", "kg", "gr", "ltr", "ml", "pack", "caja", "docena"] else 0
+                        )
+                    with col_y:
+                        nueva_ubicacion = st.text_input("Ubicación", value=prod['ubicacion'] if prod['ubicacion'] else "")
+                    
                     nuevo_detalle = st.text_area("Detalle", value=prod['detalle'] if prod['detalle'] else "")
                     
                     st.divider()
@@ -982,8 +1074,15 @@ def pagina_productos():
                     if st.form_submit_button("💾 Guardar Cambios"):
                         # Si cambió la categoría, regenerar el código
                         if nueva_categoria_id != prod['categoria_id']:
-                            cat_nueva_nombre = categorias[categorias['id']==nueva_categoria_id]['nombre'].values[0]
-                            nuevo_codigo = generar_codigo_producto(nuevo_nombre, cat_nueva_nombre)
+                            cat_nueva = categorias[categorias['id']==nueva_categoria_id].iloc[0]
+                            codigo_cat_nuevo = cat_nueva.get('codigo_categoria', '')
+                            
+                            if not codigo_cat_nuevo:
+                                # Generar código para la categoría si no tiene
+                                codigo_cat_nuevo = generar_codigo_categoria(cat_nueva['nombre'], categorias)
+                                actualizar_categoria(nueva_categoria_id, {'codigo_categoria': codigo_cat_nuevo})
+                            
+                            nuevo_codigo = generar_codigo_producto(nuevo_nombre, codigo_cat_nuevo)
                             st.info(f"La categoría cambió. Nuevo código: {nuevo_codigo}")
                             
                             actualizar_producto(producto_seleccionado, {
@@ -994,6 +1093,8 @@ def pagina_productos():
                                 'marca': nueva_marca if nueva_marca else None,
                                 'variedad': nueva_variedad if nueva_variedad else None,
                                 'presentacion': nueva_presentacion if nueva_presentacion else None,
+                                'unidad': nueva_unidad if nueva_unidad else 'Unidad',
+                                'ubicacion': nueva_ubicacion if nueva_ubicacion else None,
                                 'detalle': nuevo_detalle if nuevo_detalle else None,
                                 'precio_compra': nuevo_precio_compra,
                                 'precio_venta': nuevo_precio_venta,
@@ -1007,6 +1108,8 @@ def pagina_productos():
                                 'marca': nueva_marca if nueva_marca else None,
                                 'variedad': nueva_variedad if nueva_variedad else None,
                                 'presentacion': nueva_presentacion if nueva_presentacion else None,
+                                'unidad': nueva_unidad if nueva_unidad else 'Unidad',
+                                'ubicacion': nueva_ubicacion if nueva_ubicacion else None,
                                 'detalle': nuevo_detalle if nuevo_detalle else None,
                                 'precio_compra': nuevo_precio_compra,
                                 'precio_venta': nuevo_precio_venta,
@@ -1380,11 +1483,25 @@ def pagina_categorias():
     with tab1:
         categorias = obtener_categorias()
         if not categorias.empty:
-            st.dataframe(
-                categorias[['nombre', 'descripcion']], 
-                use_container_width=True, 
-                hide_index=True
-            )
+            # Asegurar que todas tengan código
+            categorias_display = categorias.copy()
+            if 'codigo_categoria' in categorias_display.columns:
+                st.dataframe(
+                    categorias_display[['codigo_categoria', 'nombre', 'descripcion']], 
+                    use_container_width=True, 
+                    hide_index=True,
+                    column_config={
+                        "codigo_categoria": "Código",
+                        "nombre": "Nombre",
+                        "descripcion": "Descripción"
+                    }
+                )
+            else:
+                st.dataframe(
+                    categorias_display[['nombre', 'descripcion']], 
+                    use_container_width=True, 
+                    hide_index=True
+                )
         else:
             st.info("No hay categorías registradas")
     
