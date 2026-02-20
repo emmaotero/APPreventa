@@ -1489,47 +1489,59 @@ def pagina_ventas():
                 cantidad = st.number_input("Cantidad *", min_value=1, step=1)
             with col2:
                 # Obtener precio sugerido de lista de precios
-                precio_sugerido = 0
+                precio_sugerido = None
                 lista_precios = obtener_lista_precios()
                 if not lista_precios.empty:
                     producto_precio = lista_precios[lista_precios['producto_id'] == producto_id]
                     if not producto_precio.empty:
                         precio_sugerido = float(producto_precio.iloc[0]['precio_final'])
                 
+                # Mostrar mensaje de ayuda con precio sugerido
+                mensaje_ayuda = f"💡 Precio sugerido: {formato_moneda(precio_sugerido)}" if precio_sugerido else "Ingresá el precio de venta"
+                
                 precio_unitario = st.number_input(
                     "Precio Venta *", 
-                    min_value=0.01, 
+                    min_value=0.0,
+                    value=0.0,
                     step=0.01,
-                    value=precio_sugerido if precio_sugerido > 0 else 0.01,
-                    help="Precio de la Lista de Precios" if precio_sugerido > 0 else None
+                    help=mensaje_ayuda
                 )
+                
+                # Mostrar el precio sugerido debajo del campo
+                if precio_sugerido:
+                    st.caption(f"💡 Sugerido: {formato_moneda(precio_sugerido)}")
+                
             with col3:
                 fecha_venta = st.date_input("Fecha", value=datetime.now().date())
             
-            # Mostrar total
-            total_venta = cantidad * precio_unitario
-            st.info(f"💵 **Total de la venta:** {formato_moneda(total_venta)}")
+            # Mostrar total solo si precio > 0
+            if precio_unitario > 0:
+                total_venta = cantidad * precio_unitario
+                st.info(f"💵 **Total de la venta:** {formato_moneda(total_venta)}")
             
             if st.form_submit_button("✅ Registrar Venta", type="primary"):
-                try:
-                    # Usar cliente de session_state
-                    cliente_id_venta = None
-                    if st.session_state.cliente_venta:
-                        cliente_id_venta = st.session_state.cliente_venta['id']
-                    
-                    registrar_venta({
-                        'producto_id': producto_id,
-                        'cantidad': cantidad,
-                        'precio_unitario': precio_unitario,
-                        'fecha': str(fecha_venta),
-                        'cliente_id': cliente_id_venta
-                    })
-                    st.success("✅ Venta registrada")
-                    # Limpiar cliente después de registrar
-                    st.session_state.cliente_venta = None
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error: {str(e)}")
+                if precio_unitario <= 0:
+                    st.error("❌ El precio de venta debe ser mayor a 0")
+                else:
+                    try:
+                        # Usar cliente de session_state
+                        cliente_id_venta = None
+                        if st.session_state.cliente_venta:
+                            cliente_id_venta = st.session_state.cliente_venta['id']
+                        
+                        registrar_venta({
+                            'producto_id': producto_id,
+                            'cantidad': cantidad,
+                            'precio_unitario': precio_unitario,
+                            'fecha': str(fecha_venta),
+                            'cliente_id': cliente_id_venta
+                        })
+                        st.success("✅ Venta registrada")
+                        # Limpiar cliente después de registrar
+                        st.session_state.cliente_venta = None
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error: {str(e)}")
     
     with tab2:
         col1, col2 = st.columns([3, 1])
@@ -2236,3 +2248,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
