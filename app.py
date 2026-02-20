@@ -1172,38 +1172,54 @@ def pagina_dashboard():
     # Opciones rápidas
     periodo_rapido = st.sidebar.selectbox(
         "Período rápido",
-        ["Personalizado", "Últimos 7 días", "Últimos 30 días", "Este mes", "Mes pasado", "Últimos 3 meses", "Este año"]
+        ["Personalizado", "Últimos 7 días", "Últimos 30 días", "Este mes", "Mes pasado", "Últimos 3 meses", "Este año"],
+        key="periodo_selector"
     )
     
     hoy = datetime.now().date()
     
     # Calcular fechas según período seleccionado
     if periodo_rapido == "Últimos 7 días":
-        fecha_desde = hoy - timedelta(days=7)
-        fecha_hasta = hoy
+        fecha_desde_default = hoy - timedelta(days=7)
+        fecha_hasta_default = hoy
     elif periodo_rapido == "Últimos 30 días":
-        fecha_desde = hoy - timedelta(days=30)
-        fecha_hasta = hoy
+        fecha_desde_default = hoy - timedelta(days=30)
+        fecha_hasta_default = hoy
     elif periodo_rapido == "Este mes":
-        fecha_desde = hoy.replace(day=1)
-        fecha_hasta = hoy
+        fecha_desde_default = hoy.replace(day=1)
+        fecha_hasta_default = hoy
     elif periodo_rapido == "Mes pasado":
         primer_dia_mes_actual = hoy.replace(day=1)
         ultimo_dia_mes_pasado = primer_dia_mes_actual - timedelta(days=1)
-        fecha_desde = ultimo_dia_mes_pasado.replace(day=1)
-        fecha_hasta = ultimo_dia_mes_pasado
+        fecha_desde_default = ultimo_dia_mes_pasado.replace(day=1)
+        fecha_hasta_default = ultimo_dia_mes_pasado
     elif periodo_rapido == "Últimos 3 meses":
-        fecha_desde = hoy - timedelta(days=90)
-        fecha_hasta = hoy
+        fecha_desde_default = hoy - timedelta(days=90)
+        fecha_hasta_default = hoy
     elif periodo_rapido == "Este año":
-        fecha_desde = hoy.replace(month=1, day=1)
-        fecha_hasta = hoy
+        fecha_desde_default = hoy.replace(month=1, day=1)
+        fecha_hasta_default = hoy
     else:  # Personalizado
-        col1, col2 = st.sidebar.columns(2)
-        with col1:
-            fecha_desde = st.date_input("Desde", value=hoy - timedelta(days=30), key="dash_desde")
-        with col2:
-            fecha_hasta = st.date_input("Hasta", value=hoy, key="dash_hasta")
+        fecha_desde_default = hoy - timedelta(days=30)
+        fecha_hasta_default = hoy
+    
+    # Mostrar siempre los controles de fecha
+    st.sidebar.write("**Ajustar fechas:**")
+    col1, col2 = st.sidebar.columns(2)
+    with col1:
+        fecha_desde = st.date_input(
+            "Desde", 
+            value=fecha_desde_default, 
+            key="dash_desde",
+            max_value=hoy
+        )
+    with col2:
+        fecha_hasta = st.date_input(
+            "Hasta", 
+            value=fecha_hasta_default, 
+            key="dash_hasta",
+            max_value=hoy
+        )
     
     st.sidebar.info(f"📅 Analizando: {fecha_desde.strftime('%d/%m/%Y')} - {fecha_hasta.strftime('%d/%m/%Y')}")
     
