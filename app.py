@@ -124,13 +124,15 @@ def formato_moneda(valor):
 # ============================================
 
 # --- PRODUCTOS ---
-def obtener_productos(activos_solo=True):
+def obtener_productos(activos_solo=True, excluir_pausados=False):
     usuario = obtener_usuario_actual()
     if not usuario:
         return pd.DataFrame()
     query = supabase.table("productos").select("*, categorias(nombre), proveedores(nombre)").eq("usuario_id", usuario['id'])
     if activos_solo:
         query = query.eq("activo", True)
+    if excluir_pausados:
+        query = query.eq("pausado", False)
     response = query.execute()
     return pd.DataFrame(response.data) if response.data else pd.DataFrame()
 
@@ -916,7 +918,7 @@ def pagina_dashboard():
 
 def pagina_productos():
     st.title("📦 Gestión de Stock")
-    tab1, tab2, tab3, tab4 = st.tabs(["📋 Lista", "➕ Nuevo", "📤 Importación Masiva", "✏️ Editar/Eliminar"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📋 Lista", "➕ Nuevo", "📤 Importación Masiva", "✏️ Editar/Eliminar", "⚠️ Avanzado"])
     
     with tab1:
         productos = obtener_productos()
@@ -1224,11 +1226,13 @@ def pagina_productos():
                     
                     st.divider()
                     
-                    col_a, col_b = st.columns(2)
+                    col_a, col_b, col_c = st.columns(3)
                     with col_a:
                         nuevo_precio_compra = st.number_input("Precio Costo", value=float(prod['precio_compra']), step=0.01)
                     with col_b:
-                        nuevo_stock_minimo = st.number_input("Stock Mínimo", value=int(prod['stock_minimo']), step=1)
+                        nuevo_stock_minimo = st.number_input("Stock Mínimo", value=int(prod['stock_minimo']), step=1, help="Alerta cuando el stock baja de este número")
+                    with col_c:
+                        producto_pausado = st.checkbox("⏸️ Pausar Producto", value=prod.get('pausado', False), help="No aparecerá en ventas ni compras")
                     
                     if st.form_submit_button("💾 Guardar Cambios"):
                         # Si cambió la categoría, regenerar el código
@@ -1256,7 +1260,8 @@ def pagina_productos():
                                 'ubicacion': nueva_ubicacion if nueva_ubicacion else None,
                                 'detalle': nuevo_detalle if nuevo_detalle else None,
                                 'precio_compra': nuevo_precio_compra,
-                                'stock_minimo': nuevo_stock_minimo
+                                'stock_minimo': nuevo_stock_minimo,
+                                'pausado': producto_pausado
                             })
                         else:
                             actualizar_producto(producto_seleccionado, {
@@ -1270,7 +1275,8 @@ def pagina_productos():
                                 'ubicacion': nueva_ubicacion if nueva_ubicacion else None,
                                 'detalle': nuevo_detalle if nuevo_detalle else None,
                                 'precio_compra': nuevo_precio_compra,
-                                'stock_minimo': nuevo_stock_minimo
+                                'stock_minimo': nuevo_stock_minimo,
+                                'pausado': producto_pausado
                             })
                         
                         st.success("✅ Producto actualizado")
@@ -1286,15 +1292,46 @@ def pagina_productos():
                     eliminar_producto(producto_seleccionado)
                     st.success("✅ Producto eliminado")
                     st.rerun()
+    
+    with tab5:
+        st.subheader("⚠️ Opciones Avanzadas")
+        st.warning("**Cuidado:** Estas acciones son irreversibles")
+        
+        st.divider()
+        
+        # Borrar inventario completo
+        st.subheader("🗑️ Borrar Todo el Inventario")
+        st.write("Esta acción eliminará TODOS los productos del stock (se marcarán como inactivos).")
+        st.write("**Nota:** El historial de compras y ventas se mantendrá.")
+        
+        confirmar = st.checkbox("Entiendo que esta acción es irreversible")
+        
+        if confirmar:
+            palabra_confirmacion = st.text_input("Escribí 'BORRAR TODO' para confirmar")
+            
+            if st.button("🗑️ BORRAR TODO EL INVENTARIO", type="secondary"):
+                if palabra_confirmacion == "BORRAR TODO":
+                    # Obtener todos los productos
+                    productos = obtener_productos(activos_solo=False)
+                    if not productos.empty:
+                        for _, prod in productos.iterrows():
+                            eliminar_producto(prod['id'])
+                        st.success(f"✅ {len(productos)} productos eliminados del inventario")
+                        st.balloons()
+                        st.rerun()
+                    else:
+                        st.info("No hay productos para eliminar")
+                else:
+                    st.error("Debés escribir exactamente 'BORRAR TODO' para confirmar")
 
 def pagina_compras():
     st.title("🛒 Gestión de Compras")
     tab1, tab2 = st.tabs(["➕ Registrar", "📋 Historial"])
     
     with tab1:
-        productos = obtener_productos()
+        productos = obtener_productos(excluir_pausados=True)
         if productos.empty:
-            st.warning("No hay productos registrados")
+            st.warning("No hay productos disponibles")
             return
         
         with st.form("nueva_compra"):
@@ -1367,9 +1404,9 @@ def pagina_ventas():
     tab1, tab2 = st.tabs(["➕ Registrar", "📋 Historial"])
     
     with tab1:
-        productos = obtener_productos()
+        productos = obtener_productos(excluir_pausados=True)
         if productos.empty:
-            st.warning("No hay productos registrados")
+            st.warning("No hay productos disponibles para vender")
             return
         
         # Inicializar session state para cliente
@@ -1825,9 +1862,19 @@ def pagina_lista_precios():
     st.info("""
     **¿Cómo funciona?**
     - **Margen Teórico %**: Editalo y el Precio Sugerido se recalcula automáticamente
-    - **Precio Final**: Editalo y el Margen Real se recalcula automáticamente
+    - **Precio Final**: El precio base de venta (editable)
+    - **Descuento/Recargo %**: Aplicá porcentajes para calcular precios especiales
     - Los cambios se guardan al hacer click en "Guardar Cambios"
     """)
+    
+    # Controles para descuento y recargo globales
+    col1, col2, col3 = st.columns([2, 1, 1])
+    with col1:
+        st.write("**Cálculo de Precios Especiales:**")
+    with col2:
+        descuento_global = st.number_input("Descuento % (global)", min_value=0.0, max_value=100.0, value=10.0, step=1.0, help="Se aplica sobre Precio Final")
+    with col3:
+        recargo_global = st.number_input("Recargo % (global)", min_value=0.0, max_value=500.0, value=15.0, step=1.0, help="Se aplica sobre Precio Final")
     
     lista = obtener_lista_precios()
     
@@ -1835,18 +1882,29 @@ def pagina_lista_precios():
         st.warning("No hay productos en stock. Primero cargá productos.")
         return
     
+    # Calcular precios con descuento y recargo
+    lista['precio_con_descuento'] = lista['precio_final'] * (1 - descuento_global / 100)
+    lista['precio_con_recargo'] = lista['precio_final'] * (1 + recargo_global / 100)
+    
+    # Redondear
+    lista['precio_con_descuento'] = lista['precio_con_descuento'].round(2)
+    lista['precio_con_recargo'] = lista['precio_con_recargo'].round(2)
+    
     # Ocultar producto_id de la vista
-    lista_display = lista[['codigo', 'nombre', 'precio_costo', 'margen_teorico', 'precio_sugerido', 'precio_final', 'margen_real']].copy()
+    lista_display = lista[['codigo', 'nombre', 'precio_costo', 'margen_teorico', 'precio_sugerido', 
+                           'precio_final', 'margen_real', 'precio_con_descuento', 'precio_con_recargo']].copy()
     
     # Configurar columnas editables
     columnas_config = {
         'codigo': st.column_config.TextColumn("Código", disabled=True, width="small"),
         'nombre': st.column_config.TextColumn("Producto", disabled=True, width="medium"),
         'precio_costo': st.column_config.NumberColumn("Precio Costo", disabled=True, format="$%.2f", width="small"),
-        'margen_teorico': st.column_config.NumberColumn("Margen Teórico %", min_value=0, max_value=500, step=1, format="%.1f", width="small"),
-        'precio_sugerido': st.column_config.NumberColumn("Precio Sugerido", disabled=True, format="$%.2f", width="small"),
-        'precio_final': st.column_config.NumberColumn("Precio Final", min_value=0, step=0.01, format="$%.2f", width="small"),
-        'margen_real': st.column_config.NumberColumn("Margen Real %", disabled=True, format="%.2f", width="small")
+        'margen_teorico': st.column_config.NumberColumn("Margen %", min_value=0, max_value=500, step=1, format="%.1f", width="small"),
+        'precio_sugerido': st.column_config.NumberColumn("Sugerido", disabled=True, format="$%.2f", width="small"),
+        'precio_final': st.column_config.NumberColumn("Final", min_value=0, step=0.01, format="$%.2f", width="small"),
+        'margen_real': st.column_config.NumberColumn("Real %", disabled=True, format="%.2f", width="small"),
+        'precio_con_descuento': st.column_config.NumberColumn(f"c/ Desc. {descuento_global:.0f}%", disabled=True, format="$%.2f", width="small"),
+        'precio_con_recargo': st.column_config.NumberColumn(f"c/ Rec. {recargo_global:.0f}%", disabled=True, format="$%.2f", width="small")
     }
     
     # Mostrar tabla editable
@@ -1872,6 +1930,10 @@ def pagina_lista_precios():
         # Recalcular margen real
         if precio_costo > 0:
             edited_df.at[idx, 'margen_real'] = round(((precio_final - precio_costo) / precio_costo) * 100, 2)
+        
+        # Recalcular descuento y recargo
+        edited_df.at[idx, 'precio_con_descuento'] = round(precio_final * (1 - descuento_global / 100), 2)
+        edited_df.at[idx, 'precio_con_recargo'] = round(precio_final * (1 + recargo_global / 100), 2)
     
     # Botón para guardar cambios
     col1, col2 = st.columns([1, 4])
@@ -1908,7 +1970,7 @@ def pagina_lista_precios():
     
     # Estadísticas
     st.divider()
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
         margen_promedio = edited_df['margen_real'].mean()
         st.metric("Margen Promedio", f"{margen_promedio:.1f}%")
@@ -1918,6 +1980,9 @@ def pagina_lista_precios():
     with col3:
         precio_min = edited_df['precio_final'].min()
         st.metric("Precio Más Bajo", formato_moneda(precio_min))
+    with col4:
+        promedio_descuento = edited_df['precio_con_descuento'].mean()
+        st.metric(f"Promedio c/ Desc.", formato_moneda(promedio_descuento))
 
 def pagina_clientes():
     st.title("👥 Gestión de Clientes")
