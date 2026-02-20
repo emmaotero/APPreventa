@@ -12,10 +12,31 @@ import hashlib
 # ============================================
 st.set_page_config(
     page_title="Sistema de Reventa",
-    page_icon="📦",
+    page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# ============================================
+# CARGAR CSS PERSONALIZADO
+# ============================================
+def cargar_css():
+    """Carga el CSS personalizado para el diseño premium"""
+    try:
+        with open('style.css') as f:
+            st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
+    except FileNotFoundError:
+        # Si no encuentra el archivo, usar CSS inline básico
+        st.markdown("""
+        <style>
+        #MainMenu {visibility: hidden;}
+        footer {visibility: hidden;}
+        header {visibility: hidden;}
+        </style>
+        """, unsafe_allow_html=True)
+
+# Cargar estilos
+cargar_css()
 
 @st.cache_resource
 def init_supabase() -> Client:
@@ -1164,6 +1185,26 @@ def pagina_login():
 # ============================================
 
 def pagina_dashboard():
+    # Banner de bienvenida
+    usuario = obtener_usuario_actual()
+    if usuario:
+        st.markdown(f"""
+        <div style="
+            background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+            padding: 2rem;
+            border-radius: 16px;
+            margin-bottom: 2rem;
+            box-shadow: 0 8px 16px rgba(99, 102, 241, 0.3);
+        ">
+            <h1 style="color: white; margin: 0; font-size: 2rem;">
+                👋 Hola, {usuario['nombre']}
+            </h1>
+            <p style="color: rgba(255,255,255,0.9); margin: 0.5rem 0 0 0; font-size: 1.1rem;">
+                Bienvenido a tu panel de control
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+    
     st.title("📊 Dashboard")
     
     # === FILTROS GLOBALES ===
