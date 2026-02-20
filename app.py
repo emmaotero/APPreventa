@@ -1296,7 +1296,7 @@ def pagina_dashboard():
             )
             fig.update_traces(line_color='#1f77b4', line_width=3)
             fig.update_layout(height=300)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, key="grafico_evolucion_ventas")
         else:
             st.info("No hay ventas en el período seleccionado")
         
@@ -1353,7 +1353,7 @@ def pagina_dashboard():
                     title='Ingresos por Producto'
                 )
                 fig.update_layout(height=300, showlegend=False)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True, key="grafico_pie_top_productos")
         else:
             st.info("No hay ventas en el período seleccionado")
         
@@ -1388,7 +1388,7 @@ def pagina_dashboard():
                     labels={'categoria': 'Categoría', 'subtotal': 'Ingresos ($)'}
                 )
                 fig.update_layout(height=300)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True, key="grafico_bar_categoria_tab2")
         else:
             st.info("No hay ventas por categoría")
         
@@ -1599,7 +1599,7 @@ def pagina_dashboard():
             )
             fig.update_traces(line_color='#1f77b4', line_width=3)
             fig.update_layout(height=300)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, key="grafico_line_ventas_tab1")
         else:
             st.info("No hay ventas en los últimos 30 días para mostrar")
         
@@ -1656,7 +1656,7 @@ def pagina_dashboard():
                     title='Ingresos por Producto'
                 )
                 fig.update_layout(height=300, showlegend=False)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True, key="grafico_pie_productos_tab2")
         else:
             st.info("No hay ventas este mes")
         
@@ -1691,7 +1691,7 @@ def pagina_dashboard():
                     labels={'categoria': 'Categoría', 'subtotal': 'Ingresos ($)'}
                 )
                 fig.update_layout(height=300)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True, key="grafico_bar_categoria_comparativa")
         else:
             st.info("No hay ventas por categoría")
         
