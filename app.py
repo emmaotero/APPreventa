@@ -887,6 +887,112 @@ def obtener_ventas_por_dia(dias=30):
     
     return ventas_por_dia
 
+def obtener_ventas_por_dia_periodo(fecha_desde, fecha_hasta):
+    """Obtiene ventas agrupadas por día para un período específico"""
+    ventas = obtener_ventas(fecha_desde=str(fecha_desde), fecha_hasta=str(fecha_hasta))
+    
+    if ventas.empty:
+        return pd.DataFrame()
+    
+    # Agrupar por fecha
+    ventas_por_dia = ventas.groupby('fecha').agg({
+        'subtotal': 'sum',
+        'ganancia': 'sum',
+        'id': 'count'
+    }).reset_index()
+    
+    ventas_por_dia.columns = ['fecha', 'ingresos', 'ganancia', 'cantidad_ventas']
+    
+    return ventas_por_dia
+
+def obtener_productos_mas_vendidos_periodo(fecha_desde, fecha_hasta, limite=5):
+    """Obtiene los productos más vendidos de un período específico"""
+    ventas = obtener_ventas(fecha_desde=str(fecha_desde), fecha_hasta=str(fecha_hasta))
+    
+    if ventas.empty:
+        return pd.DataFrame()
+    
+    # Agrupar por producto
+    ventas_agrupadas = ventas.groupby('producto_id').agg({
+        'cantidad': 'sum',
+        'subtotal': 'sum',
+        'ganancia': 'sum'
+    }).reset_index()
+    
+    # Ordenar por cantidad vendida
+    ventas_agrupadas = ventas_agrupadas.sort_values('cantidad', ascending=False).head(limite)
+    
+    # Obtener nombres de productos
+    productos = obtener_productos(activos_solo=False)
+    if not productos.empty:
+        ventas_agrupadas = ventas_agrupadas.merge(
+            productos[['id', 'nombre', 'codigo']], 
+            left_on='producto_id', 
+            right_on='id', 
+            how='left'
+        )
+    
+    return ventas_agrupadas
+
+def obtener_ventas_por_categoria_periodo(fecha_desde, fecha_hasta):
+    """Obtiene ventas agrupadas por categoría para un período específico"""
+    ventas = obtener_ventas(fecha_desde=str(fecha_desde), fecha_hasta=str(fecha_hasta))
+    
+    if ventas.empty:
+        return pd.DataFrame()
+    
+    # Obtener productos con categoría
+    productos = obtener_productos(activos_solo=False)
+    if productos.empty:
+        return pd.DataFrame()
+    
+    # Merge ventas con productos
+    ventas_con_categoria = ventas.merge(
+        productos[['id', 'categorias']], 
+        left_on='producto_id', 
+        right_on='id', 
+        how='left'
+    )
+    
+    # Extraer nombre de categoría
+    ventas_con_categoria['categoria'] = ventas_con_categoria['categorias'].apply(
+        lambda x: x['nombre'] if x else 'Sin categoría'
+    )
+    
+    # Agrupar por categoría
+    por_categoria = ventas_con_categoria.groupby('categoria').agg({
+        'subtotal': 'sum',
+        'ganancia': 'sum'
+    }).reset_index()
+    
+    return por_categoria.sort_values('subtotal', ascending=False)
+
+def obtener_productos_sin_movimiento_periodo(fecha_desde, fecha_hasta):
+    """Obtiene productos que no se han vendido en un período específico"""
+    usuario = obtener_usuario_actual()
+    if not usuario:
+        return pd.DataFrame()
+    
+    # Obtener todos los productos activos
+    productos = obtener_productos()
+    if productos.empty:
+        return pd.DataFrame()
+    
+    # Obtener ventas del período
+    ventas = obtener_ventas(fecha_desde=str(fecha_desde), fecha_hasta=str(fecha_hasta))
+    
+    if ventas.empty:
+        # Todos los productos sin movimiento
+        return productos[['codigo', 'nombre', 'stock_actual']]
+    
+    # Productos que SÍ se vendieron
+    productos_vendidos = ventas['producto_id'].unique()
+    
+    # Filtrar productos sin ventas
+    sin_movimiento = productos[~productos['id'].isin(productos_vendidos)]
+    
+    return sin_movimiento[['codigo', 'nombre', 'stock_actual']] if not sin_movimiento.empty else pd.DataFrame()
+
 def obtener_ventas_por_categoria():
     """Obtiene ventas del mes agrupadas por categoría"""
     hoy = datetime.now().date()
@@ -1060,7 +1166,358 @@ def pagina_login():
 def pagina_dashboard():
     st.title("📊 Dashboard")
     
+    # === FILTROS GLOBALES ===
+    st.sidebar.subheader("🔍 Filtros de Período")
+    
+    # Opciones rápidas
+    periodo_rapido = st.sidebar.selectbox(
+        "Período rápido",
+        ["Personalizado", "Últimos 7 días", "Últimos 30 días", "Este mes", "Mes pasado", "Últimos 3 meses", "Este año"]
+    )
+    
+    hoy = datetime.now().date()
+    
+    # Calcular fechas según período seleccionado
+    if periodo_rapido == "Últimos 7 días":
+        fecha_desde = hoy - timedelta(days=7)
+        fecha_hasta = hoy
+    elif periodo_rapido == "Últimos 30 días":
+        fecha_desde = hoy - timedelta(days=30)
+        fecha_hasta = hoy
+    elif periodo_rapido == "Este mes":
+        fecha_desde = hoy.replace(day=1)
+        fecha_hasta = hoy
+    elif periodo_rapido == "Mes pasado":
+        primer_dia_mes_actual = hoy.replace(day=1)
+        ultimo_dia_mes_pasado = primer_dia_mes_actual - timedelta(days=1)
+        fecha_desde = ultimo_dia_mes_pasado.replace(day=1)
+        fecha_hasta = ultimo_dia_mes_pasado
+    elif periodo_rapido == "Últimos 3 meses":
+        fecha_desde = hoy - timedelta(days=90)
+        fecha_hasta = hoy
+    elif periodo_rapido == "Este año":
+        fecha_desde = hoy.replace(month=1, day=1)
+        fecha_hasta = hoy
+    else:  # Personalizado
+        col1, col2 = st.sidebar.columns(2)
+        with col1:
+            fecha_desde = st.date_input("Desde", value=hoy - timedelta(days=30), key="dash_desde")
+        with col2:
+            fecha_hasta = st.date_input("Hasta", value=hoy, key="dash_hasta")
+    
+    st.sidebar.info(f"📅 Analizando: {fecha_desde.strftime('%d/%m/%Y')} - {fecha_hasta.strftime('%d/%m/%Y')}")
+    
     tab1, tab2, tab3 = st.tabs(["📈 Resumen General", "🛒 Análisis de Ventas", "👥 Análisis de Clientes"])
+    
+    with tab1:
+        # === MÉTRICAS PRINCIPALES ===
+        metricas = obtener_metricas_dashboard()
+        comparativa = obtener_comparativa_mes_anterior()
+        
+        # Obtener ventas del período seleccionado
+        ventas_periodo = obtener_ventas(fecha_desde=str(fecha_desde), fecha_hasta=str(fecha_hasta))
+        
+        if not ventas_periodo.empty:
+            ingresos_periodo = ventas_periodo['subtotal'].sum()
+            ganancia_periodo = ventas_periodo['ganancia'].sum()
+            cantidad_ventas = len(ventas_periodo)
+            ticket_promedio = ingresos_periodo / cantidad_ventas if cantidad_ventas > 0 else 0
+        else:
+            ingresos_periodo = ganancia_periodo = cantidad_ventas = ticket_promedio = 0
+        
+        st.subheader(f"💰 Desempeño del Período ({fecha_desde.strftime('%d/%m')} - {fecha_hasta.strftime('%d/%m')})")
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric(
+                "Ingresos", 
+                formato_moneda(ingresos_periodo),
+                delta=f"{cantidad_ventas} ventas"
+            )
+        
+        with col2:
+            st.metric(
+                "Ganancia Bruta", 
+                formato_moneda(ganancia_periodo)
+            )
+        
+        with col3:
+            # Calcular costos fijos proporcionales al período
+            dias_periodo = (fecha_hasta - fecha_desde).days + 1
+            costos_periodo = (metricas['costos_fijos_mes'] / 30) * dias_periodo
+            ganancia_neta = ganancia_periodo - costos_periodo
+            
+            st.metric(
+                "Ganancia Neta", 
+                formato_moneda(ganancia_neta)
+            )
+        
+        with col4:
+            st.metric("Ticket Promedio", formato_moneda(ticket_promedio))
+        
+        st.divider()
+        
+        # === INVENTARIO Y COSTOS ===
+        st.subheader("📦 Inventario y Costos")
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("Productos Activos", metricas['total_productos'])
+        
+        with col2:
+            st.metric("Valor del Stock", formato_moneda(metricas['valor_stock']))
+        
+        with col3:
+            st.metric("Costos Fijos/Mes", formato_moneda(metricas['costos_fijos_mes']))
+        
+        with col4:
+            if ganancia_periodo > 0:
+                margen = (ganancia_neta / ganancia_periodo * 100)
+                st.metric("Margen Neto", f"{margen:.1f}%")
+            else:
+                st.metric("Margen Neto", "0%")
+        
+        st.divider()
+        
+        # === GRÁFICO DE VENTAS ===
+        dias_grafico = (fecha_hasta - fecha_desde).days + 1
+        st.subheader(f"📊 Evolución de Ventas ({dias_grafico} días)")
+        ventas_por_dia = obtener_ventas_por_dia_periodo(fecha_desde, fecha_hasta)
+        
+        if not ventas_por_dia.empty:
+            import plotly.express as px
+            
+            fig = px.line(
+                ventas_por_dia, 
+                x='fecha', 
+                y='ingresos',
+                title='Ingresos Diarios',
+                labels={'fecha': 'Fecha', 'ingresos': 'Ingresos ($)'}
+            )
+            fig.update_traces(line_color='#1f77b4', line_width=3)
+            fig.update_layout(height=300)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No hay ventas en el período seleccionado")
+        
+        st.divider()
+        
+        # === ALERTAS ===
+        if metricas['alertas_stock'] > 0:
+            st.warning(f"⚠️ **{metricas['alertas_stock']} productos** con stock bajo del mínimo")
+            with st.expander("Ver productos con stock bajo"):
+                stock_bajo = obtener_stock_bajo()
+                st.dataframe(
+                    stock_bajo[['codigo', 'nombre', 'stock_actual', 'stock_minimo']], 
+                    use_container_width=True, 
+                    hide_index=True
+                )
+        
+        # Productos pausados
+        productos_pausados = obtener_productos(activos_solo=False)
+        if not productos_pausados.empty:
+            pausados = productos_pausados[productos_pausados.get('pausado', False) == True]
+            if not pausados.empty:
+                st.info(f"⏸️ Tenés **{len(pausados)} productos pausados**")
+    
+    with tab2:
+        st.subheader(f"🛒 Análisis de Ventas ({fecha_desde.strftime('%d/%m')} - {fecha_hasta.strftime('%d/%m')})")
+        
+        # === TOP PRODUCTOS ===
+        st.write("**🏆 Top 5 Productos Más Vendidos**")
+        top_productos = obtener_productos_mas_vendidos_periodo(fecha_desde, fecha_hasta, 5)
+        
+        if not top_productos.empty:
+            col1, col2 = st.columns([2, 1])
+            
+            with col1:
+                st.dataframe(
+                    top_productos[['codigo', 'nombre', 'cantidad', 'subtotal', 'ganancia']],
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "codigo": "Código",
+                        "nombre": "Producto",
+                        "cantidad": st.column_config.NumberColumn("Unidades", format="%d"),
+                        "subtotal": st.column_config.NumberColumn("Ingresos", format="$%.2f"),
+                        "ganancia": st.column_config.NumberColumn("Ganancia", format="$%.2f")
+                    }
+                )
+            
+            with col2:
+                import plotly.express as px
+                fig = px.pie(
+                    top_productos, 
+                    values='subtotal', 
+                    names='nombre',
+                    title='Ingresos por Producto'
+                )
+                fig.update_layout(height=300, showlegend=False)
+                st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No hay ventas en el período seleccionado")
+        
+        st.divider()
+        
+        # === VENTAS POR CATEGORÍA ===
+        st.write("**📊 Ventas por Categoría**")
+        ventas_categoria = obtener_ventas_por_categoria_periodo(fecha_desde, fecha_hasta)
+        
+        if not ventas_categoria.empty:
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.dataframe(
+                    ventas_categoria,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "categoria": "Categoría",
+                        "subtotal": st.column_config.NumberColumn("Ingresos", format="$%.2f"),
+                        "ganancia": st.column_config.NumberColumn("Ganancia", format="$%.2f")
+                    }
+                )
+            
+            with col2:
+                import plotly.express as px
+                fig = px.bar(
+                    ventas_categoria, 
+                    x='categoria', 
+                    y='subtotal',
+                    title='Ingresos por Categoría',
+                    labels={'categoria': 'Categoría', 'subtotal': 'Ingresos ($)'}
+                )
+                fig.update_layout(height=300)
+                st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No hay ventas por categoría")
+        
+        st.divider()
+        
+        # === PRODUCTOS SIN MOVIMIENTO ===
+        dias_sin_mov = (fecha_hasta - fecha_desde).days + 1
+        st.write(f"**💤 Productos Sin Movimiento (Últimos {dias_sin_mov} días)**")
+        sin_movimiento = obtener_productos_sin_movimiento_periodo(fecha_desde, fecha_hasta)
+        
+        if not sin_movimiento.empty:
+            st.warning(f"⚠️ {len(sin_movimiento)} productos sin ventas en el período")
+            st.dataframe(
+                sin_movimiento,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "codigo": "Código",
+                    "nombre": "Producto",
+                    "stock_actual": st.column_config.NumberColumn("Stock", format="%d")
+                }
+            )
+        else:
+            st.success("✅ Todos los productos han tenido movimiento")
+        
+        st.divider()
+        
+        # === COMPARATIVA MENSUAL (solo si es un período mensual) ===
+        if periodo_rapido in ["Este mes", "Mes pasado"]:
+            st.write("**📅 Comparativa vs Mes Anterior**")
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.metric(
+                    "Ingresos Mes Anterior",
+                    formato_moneda(comparativa['ingresos_anterior'])
+                )
+                st.metric(
+                    "Ingresos Mes Actual",
+                    formato_moneda(comparativa['ingresos_actual']),
+                    delta=f"{comparativa['variacion_ingresos']:+.1f}%"
+                )
+            
+            with col2:
+                st.metric(
+                    "Ganancia Mes Anterior",
+                    formato_moneda(comparativa['ganancia_anterior'])
+                )
+                st.metric(
+                    "Ganancia Mes Actual",
+                    formato_moneda(comparativa['ganancia_actual']),
+                    delta=f"{comparativa['variacion_ganancia']:+.1f}%"
+                )
+    
+    with tab3:
+        st.subheader(f"👥 Análisis de Clientes ({fecha_desde.strftime('%d/%m')} - {fecha_hasta.strftime('%d/%m')})")
+        
+        metricas_clientes = obtener_metricas_clientes()
+        
+        # === MÉTRICAS DE CLIENTES ===
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("Total Clientes", metricas_clientes['total_clientes'])
+        
+        with col2:
+            st.metric("Con Compras", metricas_clientes['clientes_con_compras'])
+        
+        with col3:
+            # Clientes que compraron en el período
+            if not ventas_periodo.empty:
+                clientes_periodo = ventas_periodo['cliente_id'].nunique()
+                st.metric("Compraron en Período", clientes_periodo)
+            else:
+                st.metric("Compraron en Período", 0)
+        
+        with col4:
+            if not ventas_periodo.empty and cantidad_ventas > 0:
+                ticket_prom_periodo = ingresos_periodo / cantidad_ventas
+                st.metric("Ticket Prom. Período", formato_moneda(ticket_prom_periodo))
+            else:
+                st.metric("Ticket Prom. Período", formato_moneda(0))
+        
+        st.divider()
+        
+        # === TOP CLIENTES ===
+        st.write("**🏆 Top 10 Mejores Clientes (Histórico)**")
+        clientes_frecuentes = obtener_clientes_frecuentes()
+        
+        if not clientes_frecuentes.empty:
+            top_clientes = clientes_frecuentes.head(10)
+            st.dataframe(
+                top_clientes[['nombre', 'dni', 'categoria_cliente', 'total_compras', 'total_gastado', 'ticket_promedio']],
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "nombre": "Cliente",
+                    "dni": "DNI",
+                    "categoria_cliente": "Categoría",
+                    "total_compras": st.column_config.NumberColumn("Compras", format="%d"),
+                    "total_gastado": st.column_config.NumberColumn("Total Gastado", format="$%.2f"),
+                    "ticket_promedio": st.column_config.NumberColumn("Ticket Prom.", format="$%.2f")
+                }
+            )
+        else:
+            st.info("No hay clientes con compras registradas")
+        
+        st.divider()
+        
+        # === CLIENTES INACTIVOS ===
+        st.write("**😴 Clientes Inactivos (+30 días sin comprar)**")
+        clientes_inactivos = obtener_clientes_inactivos()
+        
+        if not clientes_inactivos.empty:
+            st.warning(f"⚠️ {len(clientes_inactivos)} clientes inactivos")
+            st.dataframe(
+                clientes_inactivos[['nombre', 'dni', 'telefono', 'ultima_compra', 'dias_sin_comprar']].head(10),
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "nombre": "Cliente",
+                    "dni": "DNI",
+                    "telefono": "Teléfono",
+                    "ultima_compra": "Última Compra",
+                    "dias_sin_comprar": st.column_config.NumberColumn("Días", format="%d")
+                }
+            )
+        else:
+            st.success("✅ No hay clientes inactivos")
     
     with tab1:
         # === MÉTRICAS PRINCIPALES ===
