@@ -1477,40 +1477,39 @@ def pagina_ventas():
         
         # Formulario de venta
         st.subheader("2️⃣ Datos de la Venta")
+        
+        # Selector de producto FUERA del form para poder reaccionar
+        producto_id = st.selectbox(
+            "Producto *",
+            productos['id'].tolist(),
+            format_func=lambda x: f"{productos[productos['id']==x]['codigo'].values[0]} - {productos[productos['id']==x]['nombre'].values[0]} (Stock: {productos[productos['id']==x]['stock_actual'].values[0]})",
+            key="selector_producto_venta"
+        )
+        
+        # Obtener precio sugerido del producto seleccionado
+        precio_sugerido = None
+        lista_precios = obtener_lista_precios()
+        if not lista_precios.empty and producto_id:
+            producto_precio = lista_precios[lista_precios['producto_id'] == producto_id]
+            if not producto_precio.empty:
+                precio_sugerido = float(producto_precio.iloc[0]['precio_final'])
+        
+        # Mostrar precio sugerido
+        if precio_sugerido:
+            st.info(f"💡 **Precio sugerido para este producto:** {formato_moneda(precio_sugerido)}")
+        
         with st.form("nueva_venta"):
-            producto_id = st.selectbox(
-                "Producto *",
-                productos['id'].tolist(),
-                format_func=lambda x: f"{productos[productos['id']==x]['codigo'].values[0]} - {productos[productos['id']==x]['nombre'].values[0]} (Stock: {productos[productos['id']==x]['stock_actual'].values[0]})"
-            )
-            
             col1, col2, col3 = st.columns(3)
             with col1:
                 cantidad = st.number_input("Cantidad *", min_value=1, step=1)
             with col2:
-                # Obtener precio sugerido de lista de precios
-                precio_sugerido = None
-                lista_precios = obtener_lista_precios()
-                if not lista_precios.empty:
-                    producto_precio = lista_precios[lista_precios['producto_id'] == producto_id]
-                    if not producto_precio.empty:
-                        precio_sugerido = float(producto_precio.iloc[0]['precio_final'])
-                
-                # Mostrar mensaje de ayuda con precio sugerido
-                mensaje_ayuda = f"💡 Precio sugerido: {formato_moneda(precio_sugerido)}" if precio_sugerido else "Ingresá el precio de venta"
-                
                 precio_unitario = st.number_input(
                     "Precio Venta *", 
                     min_value=0.0,
                     value=0.0,
                     step=0.01,
-                    help=mensaje_ayuda
+                    help="Ingresá el precio al que vas a vender"
                 )
-                
-                # Mostrar el precio sugerido debajo del campo
-                if precio_sugerido:
-                    st.caption(f"💡 Sugerido: {formato_moneda(precio_sugerido)}")
-                
             with col3:
                 fecha_venta = st.date_input("Fecha", value=datetime.now().date())
             
@@ -2248,4 +2247,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
