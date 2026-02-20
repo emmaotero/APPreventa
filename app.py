@@ -1190,17 +1190,18 @@ def pagina_dashboard():
     if usuario:
         st.markdown(f"""
         <div style="
-            background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+            background: linear-gradient(135deg, #2563eb 0%, #1e40af 100%);
             padding: 2rem;
-            border-radius: 16px;
+            border-radius: 12px;
             margin-bottom: 2rem;
-            box-shadow: 0 8px 16px rgba(99, 102, 241, 0.3);
+            box-shadow: 0 4px 12px rgba(37, 99, 235, 0.25);
+            border: 1px solid #1e40af;
         ">
-            <h1 style="color: white; margin: 0; font-size: 2rem;">
+            <h1 style="color: white; margin: 0; font-size: 2rem; font-weight: 700;">
                 👋 Hola, {usuario['nombre']}
             </h1>
             <p style="color: rgba(255,255,255,0.9); margin: 0.5rem 0 0 0; font-size: 1.1rem;">
-                Bienvenido a tu panel de control
+                Bienvenido a tu panel de control • <span style="color: #f97316; font-weight: 600;">Sistema de Reventa</span>
             </p>
         </div>
         """, unsafe_allow_html=True)
