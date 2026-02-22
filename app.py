@@ -360,8 +360,8 @@ def procesar_importacion_productos(df, usuario_id):
             nombre_producto = str(fila['nombre']).strip()
             codigo = generar_codigo_producto(nombre_producto, codigo_cat)
             
-            # VERIFICAR SI EL PRODUCTO YA EXISTE (por código o por nombre+categoría)
-            productos_existentes = obtener_productos(activos_solo=False)
+            # VERIFICAR SI EL PRODUCTO YA EXISTE (solo productos activos)
+            productos_existentes = obtener_productos(activos_solo=True)
             producto_existente = None
             
             if not productos_existentes.empty:
@@ -432,22 +432,22 @@ def procesar_importacion_productos(df, usuario_id):
                 resultados['detalles'].append(f"✅ {nombre_producto} ({codigo}) - ACTUALIZADO")
             else:
                 # Crear producto nuevo
-                crear_producto(producto_data)
+                producto_creado_data = crear_producto(producto_data)
                 
                 # Si tiene stock y fecha de compra, registrar la compra
-                if producto_data['stock_actual'] > 0:
+                if producto_data['stock_actual'] > 0 and producto_creado_data:
                     fecha_compra = str(fila['fecha_compra']) if not pd.isna(fila.get('fecha_compra')) else str(datetime.now().date())
-                    # Obtener el producto recién creado para registrar compra
-                    productos = obtener_productos(activos_solo=False)
-                    if not productos.empty:
-                        producto_creado = productos[productos['codigo'] == codigo].iloc[0]
-                        registrar_compra({
-                            'producto_id': producto_creado['id'],
-                            'cantidad': producto_data['stock_actual'],
-                            'precio_unitario': producto_data['precio_compra'],
-                            'fecha': fecha_compra,
-                            'usuario_id': usuario_id
-                        })
+                    
+                    # Usar el ID del producto recién creado
+                    producto_id_creado = producto_creado_data[0]['id']
+                    
+                    registrar_compra({
+                        'producto_id': producto_id_creado,
+                        'cantidad': producto_data['stock_actual'],
+                        'precio_unitario': producto_data['precio_compra'],
+                        'fecha': fecha_compra,
+                        'usuario_id': usuario_id
+                    })
                 
                 resultados['exitosos'] += 1
                 resultados['detalles'].append(f"✅ {nombre_producto} ({codigo}) - CREADO")
@@ -2124,7 +2124,7 @@ def pagina_productos():
                     # Mostrar resultados
                     col1, col2 = st.columns(2)
                     with col1:
-                        st.metric("✅ Productos creados", resultados['exitosos'])
+                        st.metric("✅ Productos procesados", resultados['exitosos'])
                     with col2:
                         st.metric("❌ Errores", resultados['errores'])
                     
@@ -2134,14 +2134,17 @@ def pagina_productos():
                     if resultados['proveedores_creados']:
                         st.success(f"👥 Proveedores creados: {', '.join(resultados['proveedores_creados'])}")
                     
-                    # Mostrar detalles
-                    with st.expander("📋 Ver detalles de la importación"):
+                    # Mostrar detalles (expandido por defecto si hay errores)
+                    with st.expander("📋 Ver detalles de la importación", expanded=(resultados['errores'] > 0)):
                         for detalle in resultados['detalles']:
-                            st.write(detalle)
+                            if "❌" in detalle:
+                                st.error(detalle)
+                            else:
+                                st.success(detalle)
                     
                     if resultados['exitosos'] > 0:
                         st.balloons()
-                        st.success(f"🎉 Importación completada! {resultados['exitosos']} productos agregados")
+                        st.success(f"🎉 Importación completada! {resultados['exitosos']} productos procesados")
                     
                     if resultados['errores'] > 0:
                         st.warning(f"⚠️ {resultados['errores']} filas tuvieron errores. Revisá los detalles arriba.")
