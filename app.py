@@ -166,8 +166,18 @@ def crear_producto(datos):
 def actualizar_producto(id_producto, datos):
     return supabase.table("productos").update(datos).eq("id", id_producto).execute().data
 
-def eliminar_producto(id_producto):
-    return supabase.table("productos").update({"activo": False, "pausado": False}).eq("id", id_producto).execute().data
+def eliminar_producto(id_producto, borrado_permanente=False):
+    """
+    Elimina un producto.
+    Si borrado_permanente=True, lo borra de la BD.
+    Si False, solo lo marca como inactivo.
+    """
+    if borrado_permanente:
+        # Borrar permanentemente
+        return supabase.table("productos").delete().eq("id", id_producto).execute().data
+    else:
+        # Solo marcar como inactivo
+        return supabase.table("productos").update({"activo": False, "pausado": False}).eq("id", id_producto).execute().data
 
 # --- IMPORTACIÓN MASIVA ---
 def generar_template_importacion():
@@ -2349,12 +2359,12 @@ def pagina_productos():
             
             if st.button("🗑️ BORRAR TODO EL INVENTARIO", type="secondary"):
                 if palabra_confirmacion == "BORRAR TODO":
-                    # Obtener todos los productos
+                    # Obtener todos los productos (activos e inactivos)
                     productos = obtener_productos(activos_solo=False)
                     if not productos.empty:
                         for _, prod in productos.iterrows():
-                            eliminar_producto(prod['id'])
-                        st.success(f"✅ {len(productos)} productos eliminados del inventario")
+                            eliminar_producto(prod['id'], borrado_permanente=True)  # BORRADO PERMANENTE
+                        st.success(f"✅ {len(productos)} productos eliminados permanentemente del inventario")
                         st.balloons()
                         st.rerun()
                     else:
