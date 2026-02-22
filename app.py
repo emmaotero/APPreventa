@@ -405,10 +405,13 @@ def procesar_importacion_productos(df, usuario_id):
                 'ubicacion': str(fila['ubicacion']).strip() if not pd.isna(fila.get('ubicacion')) else None,
                 'detalle': str(fila['detalle']).strip() if not pd.isna(fila.get('detalle')) else None,
                 'precio_compra': float(fila['precio_compra']),
-                'stock_actual': int(fila['stock_inicial']) if not pd.isna(fila.get('stock_inicial')) else 0,
+                'stock_actual': 0,  # IMPORTANTE: Empezar en 0, la compra lo suma
                 'stock_minimo': int(fila['stock_minimo']) if not pd.isna(fila.get('stock_minimo')) else 0,
                 'usuario_id': usuario_id
             }
+            
+            # Guardar el stock inicial por separado
+            stock_inicial = int(fila['stock_inicial']) if not pd.isna(fila.get('stock_inicial')) else 0
             
             # Si el producto existe, actualizarlo en vez de crearlo
             if producto_existente is not None:
@@ -426,16 +429,16 @@ def procesar_importacion_productos(df, usuario_id):
                 })
                 
                 # Si tiene stock inicial, agregar al stock actual
-                if producto_data['stock_actual'] > 0:
+                if stock_inicial > 0:
                     # Sumar al stock existente
-                    nuevo_stock = int(producto_existente['stock_actual']) + producto_data['stock_actual']
+                    nuevo_stock = int(producto_existente['stock_actual']) + stock_inicial
                     actualizar_producto(producto_existente['id'], {'stock_actual': nuevo_stock})
                     
                     # Registrar compra
                     fecha_compra = str(fila['fecha_compra']) if not pd.isna(fila.get('fecha_compra')) else str(datetime.now().date())
                     registrar_compra({
                         'producto_id': producto_existente['id'],
-                        'cantidad': producto_data['stock_actual'],
+                        'cantidad': stock_inicial,
                         'precio_unitario': producto_data['precio_compra'],
                         'fecha': fecha_compra,
                         'usuario_id': usuario_id
@@ -447,8 +450,8 @@ def procesar_importacion_productos(df, usuario_id):
                 # Crear producto nuevo
                 producto_creado_data = crear_producto(producto_data)
                 
-                # Si tiene stock y fecha de compra, registrar la compra
-                if producto_data['stock_actual'] > 0 and producto_creado_data:
+                # Si tiene stock inicial, registrar la compra (que suma al stock)
+                if stock_inicial > 0 and producto_creado_data:
                     fecha_compra = str(fila['fecha_compra']) if not pd.isna(fila.get('fecha_compra')) else str(datetime.now().date())
                     
                     # Usar el ID del producto recién creado
@@ -456,7 +459,7 @@ def procesar_importacion_productos(df, usuario_id):
                     
                     registrar_compra({
                         'producto_id': producto_id_creado,
-                        'cantidad': producto_data['stock_actual'],
+                        'cantidad': stock_inicial,
                         'precio_unitario': producto_data['precio_compra'],
                         'fecha': fecha_compra,
                         'usuario_id': usuario_id
