@@ -167,7 +167,7 @@ def actualizar_producto(id_producto, datos):
     return supabase.table("productos").update(datos).eq("id", id_producto).execute().data
 
 def eliminar_producto(id_producto):
-    return supabase.table("productos").update({"activo": False}).eq("id", id_producto).execute().data
+    return supabase.table("productos").update({"activo": False, "pausado": False}).eq("id", id_producto).execute().data
 
 # --- IMPORTACIÓN MASIVA ---
 def generar_template_importacion():
@@ -851,8 +851,13 @@ def obtener_ventas_por_producto():
 def obtener_metricas_dashboard():
     productos = obtener_productos()
     total_productos = len(productos)
-    # Valor de stock a precio de costo
-    valor_stock = (productos['stock_actual'] * productos['precio_compra']).sum() if not productos.empty else 0
+    
+    # Productos con stock (los que realmente cuentan)
+    productos_con_stock = productos[productos['stock_actual'] > 0] if not productos.empty else pd.DataFrame()
+    total_con_stock = len(productos_con_stock)
+    
+    # Valor de stock a precio de costo (solo productos con stock)
+    valor_stock = (productos_con_stock['stock_actual'] * productos_con_stock['precio_compra']).sum() if not productos_con_stock.empty else 0
     
     hoy = datetime.now().date()
     inicio_mes = hoy.replace(day=1)
@@ -874,6 +879,7 @@ def obtener_metricas_dashboard():
     
     return {
         'total_productos': total_productos,
+        'total_con_stock': total_con_stock,
         'valor_stock': valor_stock,
         'ingresos_mes': ingresos_mes,
         'ganancia_bruta_mes': ganancia_bruta_mes,
@@ -932,12 +938,15 @@ def obtener_productos_sin_movimiento(dias=30):
     
     if ventas.empty:
         # Todos los productos sin movimiento
-        return productos[['codigo', 'nombre', 'categoria', 'stock_actual']]
+        return productos[['codigo', 'nombre', 'stock_actual']]
     
     # Productos que SÍ se vendieron
     productos_vendidos = ventas['producto_id'].unique()
     
     # Filtrar productos sin ventas
+    sin_movimiento = productos[~productos['id'].isin(productos_vendidos)]
+    
+    return sin_movimiento[['codigo', 'nombre', 'stock_actual']] if not sin_movimiento.empty else pd.DataFrame()
     sin_movimiento = productos[~productos['id'].isin(productos_vendidos)]
     
     return sin_movimiento[['codigo', 'nombre', 'stock_actual']] if not sin_movimiento.empty else pd.DataFrame()
@@ -1373,7 +1382,7 @@ def pagina_dashboard():
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            st.metric("Productos Activos", metricas['total_productos'])
+            st.metric("Productos con Stock", metricas["total_con_stock"], delta=f"{metricas['total_productos']} total")
         
         with col2:
             st.metric("Valor del Stock", formato_moneda(metricas['valor_stock']))
@@ -1677,7 +1686,7 @@ def pagina_dashboard():
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            st.metric("Productos Activos", metricas['total_productos'])
+            st.metric("Productos con Stock", metricas["total_con_stock"], delta=f"{metricas['total_productos']} total")
         
         with col2:
             st.metric("Valor del Stock", formato_moneda(metricas['valor_stock']))
