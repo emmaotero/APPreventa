@@ -360,6 +360,25 @@ def procesar_importacion_productos(df, usuario_id):
             nombre_producto = str(fila['nombre']).strip()
             codigo = generar_codigo_producto(nombre_producto, codigo_cat)
             
+            # VERIFICAR SI EL PRODUCTO YA EXISTE (por código o por nombre+categoría)
+            productos_existentes = obtener_productos(activos_solo=False)
+            producto_existente = None
+            
+            if not productos_existentes.empty:
+                # Buscar por código
+                producto_por_codigo = productos_existentes[productos_existentes['codigo'] == codigo]
+                if not producto_por_codigo.empty:
+                    producto_existente = producto_por_codigo.iloc[0]
+                else:
+                    # Buscar por nombre + categoría (por si cambió el código)
+                    productos_misma_cat = productos_existentes[productos_existentes['categoria_id'] == categoria_id]
+                    if not productos_misma_cat.empty:
+                        producto_por_nombre = productos_misma_cat[
+                            productos_misma_cat['nombre'].str.upper() == nombre_producto.upper()
+                        ]
+                        if not producto_por_nombre.empty:
+                            producto_existente = producto_por_nombre.iloc[0]
+            
             # Preparar datos del producto
             producto_data = {
                 'codigo': codigo,
@@ -378,26 +397,60 @@ def procesar_importacion_productos(df, usuario_id):
                 'usuario_id': usuario_id
             }
             
-            # Crear producto
-            crear_producto(producto_data)
-            
-            # Si tiene stock y fecha de compra, registrar la compra
-            if producto_data['stock_actual'] > 0:
-                fecha_compra = str(fila['fecha_compra']) if not pd.isna(fila.get('fecha_compra')) else str(datetime.now().date())
-                # Obtener el producto recién creado para registrar compra
-                productos = obtener_productos(activos_solo=False)
-                if not productos.empty:
-                    producto_creado = productos[productos['codigo'] == codigo].iloc[0]
+            # Si el producto existe, actualizarlo en vez de crearlo
+            if producto_existente is not None:
+                # Actualizar producto existente
+                actualizar_producto(producto_existente['id'], {
+                    'precio_compra': producto_data['precio_compra'],
+                    'stock_minimo': producto_data['stock_minimo'],
+                    'marca': producto_data['marca'],
+                    'variedad': producto_data['variedad'],
+                    'presentacion': producto_data['presentacion'],
+                    'unidad': producto_data['unidad'],
+                    'ubicacion': producto_data['ubicacion'],
+                    'detalle': producto_data['detalle'],
+                    'activo': True  # Reactivar si estaba inactivo
+                })
+                
+                # Si tiene stock inicial, agregar al stock actual
+                if producto_data['stock_actual'] > 0:
+                    # Sumar al stock existente
+                    nuevo_stock = int(producto_existente['stock_actual']) + producto_data['stock_actual']
+                    actualizar_producto(producto_existente['id'], {'stock_actual': nuevo_stock})
+                    
+                    # Registrar compra
+                    fecha_compra = str(fila['fecha_compra']) if not pd.isna(fila.get('fecha_compra')) else str(datetime.now().date())
                     registrar_compra({
-                        'producto_id': producto_creado['id'],
+                        'producto_id': producto_existente['id'],
                         'cantidad': producto_data['stock_actual'],
                         'precio_unitario': producto_data['precio_compra'],
                         'fecha': fecha_compra,
                         'usuario_id': usuario_id
                     })
-            
-            resultados['exitosos'] += 1
-            resultados['detalles'].append(f"✅ {nombre_producto} ({codigo})")
+                
+                resultados['exitosos'] += 1
+                resultados['detalles'].append(f"✅ {nombre_producto} ({codigo}) - ACTUALIZADO")
+            else:
+                # Crear producto nuevo
+                crear_producto(producto_data)
+                
+                # Si tiene stock y fecha de compra, registrar la compra
+                if producto_data['stock_actual'] > 0:
+                    fecha_compra = str(fila['fecha_compra']) if not pd.isna(fila.get('fecha_compra')) else str(datetime.now().date())
+                    # Obtener el producto recién creado para registrar compra
+                    productos = obtener_productos(activos_solo=False)
+                    if not productos.empty:
+                        producto_creado = productos[productos['codigo'] == codigo].iloc[0]
+                        registrar_compra({
+                            'producto_id': producto_creado['id'],
+                            'cantidad': producto_data['stock_actual'],
+                            'precio_unitario': producto_data['precio_compra'],
+                            'fecha': fecha_compra,
+                            'usuario_id': usuario_id
+                        })
+                
+                resultados['exitosos'] += 1
+                resultados['detalles'].append(f"✅ {nombre_producto} ({codigo}) - CREADO")
             
         except Exception as e:
             resultados['errores'] += 1
