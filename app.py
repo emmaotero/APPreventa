@@ -283,6 +283,9 @@ def procesar_importacion_productos(df, usuario_id):
     cat_map = {cat['nombre']: cat['id'] for _, cat in categorias_existentes.iterrows()} if not categorias_existentes.empty else {}
     prov_map = {prov['nombre']: prov['id'] for _, prov in proveedores_existentes.iterrows()} if not proveedores_existentes.empty else {}
     
+    # IMPORTANTE: Registro de códigos ya usados en esta importación
+    codigos_usados = set()
+    
     for idx, fila in df.iterrows():
         # Saltar filas vacías
         if pd.isna(fila.get('nombre')):
@@ -358,7 +361,7 @@ def procesar_importacion_productos(df, usuario_id):
             
             # Generar código con el código de categoría
             nombre_producto = str(fila['nombre']).strip()
-            codigo = generar_codigo_producto(nombre_producto, codigo_cat)
+            codigo = generar_codigo_producto(nombre_producto, codigo_cat, codigos_usados)
             
             # VERIFICAR SI EL PRODUCTO YA EXISTE (solo productos activos)
             productos_existentes = obtener_productos(activos_solo=True)
@@ -584,29 +587,46 @@ def generar_codigo_categoria(nombre_categoria, categorias_existentes):
     
     return codigo[:8]  # Máximo 8 caracteres
 
-def generar_codigo_producto(nombre_producto, codigo_categoria):
+def generar_codigo_producto(nombre_producto, codigo_categoria, codigos_ya_usados=None):
     """Genera código único del producto: TABNAT-0001"""
     usuario = obtener_usuario_actual()
     if not usuario:
         return None
     
-    # Obtener productos de esa categoría para el contador
-    productos_cat = obtener_productos(activos_solo=False)
+    # Si no se pasa lista de códigos usados, crear una vacía
+    if codigos_ya_usados is None:
+        codigos_ya_usados = set()
     
-    if not productos_cat.empty and 'categorias' in productos_cat.columns:
-        # Filtrar por categorías que tengan el mismo código
-        contador = 0
+    # Obtener productos ACTIVOS de esa categoría para el contador
+    productos_cat = obtener_productos(activos_solo=True)
+    
+    # Contar cuántos códigos existen con este prefijo
+    contador = 0
+    if not productos_cat.empty and 'codigo' in productos_cat.columns:
         for _, prod in productos_cat.iterrows():
             if prod.get('codigo') and prod['codigo'].startswith(codigo_categoria + '-'):
                 contador += 1
+    
+    # También contar los códigos generados en esta sesión
+    contador += len([c for c in codigos_ya_usados if c.startswith(codigo_categoria + '-')])
+    
+    # Generar código único
+    while True:
         contador += 1
-    else:
-        contador = 1
-    
-    # Formato: TABNAT-0001
-    codigo = f"{codigo_categoria}-{contador:04d}"
-    
-    return codigo
+        codigo = f"{codigo_categoria}-{contador:04d}"
+        
+        # Verificar que no exista en la BD ni en los recién generados
+        existe_en_bd = False
+        if not productos_cat.empty:
+            existe_en_bd = (productos_cat['codigo'] == codigo).any()
+        
+        if not existe_en_bd and codigo not in codigos_ya_usados:
+            codigos_ya_usados.add(codigo)
+            return codigo
+        
+        # Si existe, incrementar y reintentar
+        if contador > 9999:  # Límite de seguridad
+            return f"{codigo_categoria}-{hash(nombre_producto) % 10000:04d}"
 
 # --- PROVEEDORES ---
 def obtener_proveedores():
