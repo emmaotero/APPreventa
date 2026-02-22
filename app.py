@@ -485,6 +485,45 @@ def eliminar_compra(id_compra):
     """Elimina una compra - OJO: no revierte el stock automáticamente"""
     return supabase.table("compras").delete().eq("id", id_compra).execute().data
 
+# --- AJUSTES DE INVENTARIO ---
+def registrar_ajuste_inventario(producto_id, cantidad_nueva, motivo, notas=""):
+    """Registra un ajuste manual de inventario"""
+    usuario = obtener_usuario_actual()
+    if not usuario:
+        return None
+    
+    # Obtener stock actual
+    producto = supabase.table("productos").select("stock_actual").eq("id", producto_id).execute().data
+    if not producto:
+        return None
+    
+    cantidad_anterior = producto[0]['stock_actual']
+    diferencia = cantidad_nueva - cantidad_anterior
+    
+    # Registrar ajuste
+    ajuste_data = {
+        'producto_id': producto_id,
+        'usuario_id': usuario['id'],
+        'cantidad_anterior': cantidad_anterior,
+        'cantidad_nueva': cantidad_nueva,
+        'diferencia': diferencia,
+        'motivo': motivo,
+        'notas': notas,
+        'fecha': str(datetime.now().date())
+    }
+    
+    response = supabase.table("ajustes_inventario").insert(ajuste_data).execute()
+    
+    # Actualizar stock del producto
+    supabase.table("productos").update({"stock_actual": cantidad_nueva}).eq("id", producto_id).execute()
+    
+    return response.data
+
+def obtener_ajustes_producto(producto_id):
+    """Obtiene el historial de ajustes de un producto"""
+    response = supabase.table("ajustes_inventario").select("*").eq("producto_id", producto_id).order("created_at", desc=True).execute()
+    return pd.DataFrame(response.data) if response.data else pd.DataFrame()
+
 def obtener_compras(fecha_desde=None, fecha_hasta=None):
     usuario = obtener_usuario_actual()
     if not usuario:
@@ -2334,6 +2373,58 @@ def pagina_productos():
                         st.rerun()
             
             with col2:
+                # AJUSTE DE STOCK
+                st.subheader("📦 Ajustar Stock")
+                st.info(f"**Stock actual:** {prod['stock_actual']} unidades")
+                
+                with st.form("ajustar_stock"):
+                    nuevo_stock = st.number_input(
+                        "Nuevo stock", 
+                        min_value=0, 
+                        value=int(prod['stock_actual']), 
+                        step=1,
+                        help="Ingresá la cantidad correcta de stock"
+                    )
+                    
+                    motivo = st.selectbox(
+                        "Motivo del ajuste",
+                        ["Corrección de inventario", "Pérdida", "Robo", "Deterioro", "Devolución", "Otro"]
+                    )
+                    
+                    notas_ajuste = st.text_area("Notas (opcional)", placeholder="Ej: Encontré 5 unidades más en el depósito")
+                    
+                    if st.form_submit_button("💾 Guardar Ajuste", type="primary"):
+                        if nuevo_stock != prod['stock_actual']:
+                            registrar_ajuste_inventario(
+                                producto_seleccionado,
+                                nuevo_stock,
+                                motivo,
+                                notas_ajuste
+                            )
+                            diferencia = nuevo_stock - prod['stock_actual']
+                            if diferencia > 0:
+                                st.success(f"✅ Stock ajustado: +{diferencia} unidades")
+                            else:
+                                st.success(f"✅ Stock ajustado: {diferencia} unidades")
+                            st.rerun()
+                        else:
+                            st.warning("⚠️ El stock no cambió")
+                
+                # Historial de ajustes
+                ajustes = obtener_ajustes_producto(producto_seleccionado)
+                if not ajustes.empty:
+                    with st.expander(f"📜 Historial de ajustes ({len(ajustes)})"):
+                        for _, ajuste in ajustes.head(5).iterrows():
+                            diferencia_signo = f"+{ajuste['diferencia']}" if ajuste['diferencia'] > 0 else str(ajuste['diferencia'])
+                            st.write(f"**{ajuste['fecha']}** - {ajuste['motivo']}")
+                            st.caption(f"{ajuste['cantidad_anterior']} → {ajuste['cantidad_nueva']} ({diferencia_signo})")
+                            if ajuste.get('notas'):
+                                st.caption(f"💬 {ajuste['notas']}")
+                            st.divider()
+                
+                st.divider()
+                
+                # ELIMINAR
                 st.subheader("🗑️ Eliminar")
                 st.warning(f"**Producto:** {prod['nombre']}")
                 st.write(f"**Código:** {prod['codigo']}")
