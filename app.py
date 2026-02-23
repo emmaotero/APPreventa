@@ -2157,33 +2157,29 @@ def pagina_productos():
                 ) if not proveedores.empty else None
                 
                 with col2:
-                marca = st.text_input("Marca")
-                variedad = st.text_input("Variedad")
-                presentacion = st.text_input("Presentación")
-                unidad = st.selectbox("Unidad", ["Unidad", "kg", "gr", "ltr", "ml", "pack", "caja", "docena"])
-                ubicacion = st.text_input("Ubicación Física")
-                
-                detalle = st.text_area("Detalle / Otro")
-                
+                    marca = st.text_input("Marca")
+                    variedad = st.text_input("Variedad")
+                    presentacion = st.text_input("Presentación")
+                    unidad = st.selectbox("Unidad", ["Unidad", "kg", "gr", "ltr", "ml", "pack", "caja", "docena"])
+                    ubicacion = st.text_input("Ubicación Física")
+                                detalle = st.text_area("Detalle / Otro")
                 st.divider()
                 st.subheader("Precios y Stock")
-                
                 col1, col2 = st.columns(2)
                 with col1:
-                precio_compra = st.number_input("Precio Costo *", min_value=0.0, step=0.01)
-                stock_inicial = st.number_input("Stock Inicial", min_value=0, step=1)
+                    precio_compra = st.number_input("Precio Costo *", min_value=0.0, step=0.01)
+                    stock_inicial = st.number_input("Stock Inicial", min_value=0, step=1)
                 with col2:
-                stock_minimo = st.number_input("Stock Mínimo", min_value=0, step=1, value=0)
-                
-                # Mostrar código que se generará
-                if nombre and categoria_id:
-                cat_seleccionada = categorias[categorias['id']==categoria_id].iloc[0]
-                codigo_cat = cat_seleccionada.get('codigo_categoria', '')
-                if not codigo_cat:
-                    # Si la categoría no tiene código, generarlo
+                    stock_minimo = st.number_input("Stock Mínimo", min_value=0, step=1, value=0)
+                                # Mostrar código que se generará
+                    if nombre and categoria_id:
+                    cat_seleccionada = categorias[categorias['id']==categoria_id].iloc[0]
+                    codigo_cat = cat_seleccionada.get('codigo_categoria', '')
+                        if not codigo_cat:
+                        # Si la categoría no tiene código, generarlo
                     cat_nombre = cat_seleccionada['nombre']
                     codigo_cat = generar_codigo_categoria(cat_nombre, categorias)
-                codigo_preview = f"{codigo_cat}-0001"
+                    codigo_preview = f"{codigo_cat}-0001"
                 st.info(f"📋 Código que se asignará: **{codigo_preview}** (aproximado)")
                 
                 if st.form_submit_button("✅ Crear Producto"):
@@ -2193,8 +2189,8 @@ def pagina_productos():
                     
                     if not codigo_cat:
                         # Si la categoría no tiene código, generarlo y actualizarla
-                        cat_nombre = cat_seleccionada['nombre']
-                        codigo_cat = generar_codigo_categoria(cat_nombre, categorias)
+                    cat_nombre = cat_seleccionada['nombre']
+                    codigo_cat = generar_codigo_categoria(cat_nombre, categorias)
                         actualizar_categoria(categoria_id, {'codigo_categoria': codigo_cat})
                     
                     codigo_generado = generar_codigo_producto(nombre, codigo_cat)
@@ -2234,7 +2230,7 @@ def pagina_productos():
             
             col1, col2 = st.columns([1, 2])
             
-            with col1:
+                with col1:
                 st.download_button(
                 label="📥 Descargar Template Excel",
                 data=generar_template_importacion(),
@@ -2243,7 +2239,7 @@ def pagina_productos():
                 type="primary"
                 )
             
-            with col2:
+                with col2:
                 st.write("**Campos obligatorios:**")
                 st.write("• Nombre del producto")
                     st.write("• Categoría")  
