@@ -108,20 +108,32 @@ def obtener_usuarios_emprendimiento():
     return pd.DataFrame(response.data) if response.data else pd.DataFrame()
 
 def agregar_usuario_emprendimiento(email, nombre, rol):
-    """Agrega un usuario al emprendimiento"""
+    """Agrega un usuario al emprendimiento o lo reactiva si existía"""
     usuario = obtener_usuario_actual()
     if not usuario:
         return None
     
-    data = {
-        'usuario_principal_id': usuario['id'],
-        'email': email,
-        'nombre': nombre,
-        'rol': rol,
-        'activo': True
-    }
+    # Verificar si el usuario ya existe (activo o inactivo)
+    existing = supabase.table("usuarios_emprendimiento").select("*").eq("usuario_principal_id", usuario['id']).eq("email", email).execute()
     
-    return supabase.table("usuarios_emprendimiento").insert(data).execute().data
+    if existing.data:
+        # Ya existe, reactivarlo y actualizar datos
+        usuario_id = existing.data[0]['id']
+        return supabase.table("usuarios_emprendimiento").update({
+            'nombre': nombre,
+            'rol': rol,
+            'activo': True
+        }).eq("id", usuario_id).execute().data
+    else:
+        # No existe, crearlo
+        data = {
+            'usuario_principal_id': usuario['id'],
+            'email': email,
+            'nombre': nombre,
+            'rol': rol,
+            'activo': True
+        }
+        return supabase.table("usuarios_emprendimiento").insert(data).execute().data
 
 def actualizar_usuario_emprendimiento(usuario_emp_id, datos):
     """Actualiza un usuario del emprendimiento"""
@@ -3143,7 +3155,7 @@ def pagina_usuarios():
     
     st.info("💡 Agregá empleados o colaboradores para que puedan usar el sistema con diferentes niveles de acceso")
     
-    tab1, tab2, tab3 = st.tabs(["📋 Usuarios Activos", "➕ Agregar Usuario", "📖 Roles y Permisos"])
+    tab1, tab2, tab3 = st.tabs(["📋 Todos los Usuarios", "➕ Agregar Usuario", "📖 Roles y Permisos"])
     
     with tab1:
         usuarios = obtener_usuarios_emprendimiento()
@@ -3151,9 +3163,16 @@ def pagina_usuarios():
         if usuarios.empty:
             st.info("No hay usuarios adicionales. Podés agregar empleados o colaboradores.")
         else:
-            st.subheader(f"👥 Usuarios del emprendimiento ({len(usuarios)})")
+            # Separar activos e inactivos
+            usuarios_activos = usuarios[usuarios['activo'] == True]
+            usuarios_inactivos = usuarios[usuarios['activo'] == False]
             
-            for _, user in usuarios.iterrows():
+            st.subheader(f"🟢 Usuarios Activos ({len(usuarios_activos)})")
+            
+            if usuarios_activos.empty:
+                st.info("No hay usuarios activos")
+            else:
+                for _, user in usuarios_activos.iterrows():
                 with st.expander(f"{'🟢' if user['activo'] else '🔴'} {user['nombre']} ({user['email']})"):
                     col1, col2, col3 = st.columns(3)
                     
@@ -3164,10 +3183,37 @@ def pagina_usuarios():
                         st.write(f"**Estado:** {'Activo' if user['activo'] else 'Inactivo'}")
                     
                     with col3:
-                        if st.button(f"🗑️ Desactivar", key=f"del_{user['id']}"):
-                            eliminar_usuario_emprendimiento(user['id'])
-                            st.success(f"✅ Usuario {user['nombre']} desactivado")
-                            st.rerun()
+                        if user['activo']:
+                            if st.button(f"🗑️ Desactivar", key=f"del_{user['id']}"):
+                                eliminar_usuario_emprendimiento(user['id'])
+                                st.success(f"✅ Usuario {user['nombre']} desactivado")
+                                st.rerun()
+                        else:
+                            if st.button(f"✅ Reactivar", key=f"react_{user['id']}", type="primary"):
+                                actualizar_usuario_emprendimiento(user['id'], {'activo': True})
+                                st.success(f"✅ Usuario {user['nombre']} reactivado")
+                                st.rerun()
+            
+            # Mostrar inactivos si hay
+            if not usuarios_inactivos.empty:
+                st.divider()
+                st.subheader(f"🔴 Usuarios Inactivos ({len(usuarios_inactivos)})")
+                
+                for _, user in usuarios_inactivos.iterrows():
+                    with st.expander(f"🔴 {user['nombre']} ({user['email']})"):
+                        col1, col2, col3 = st.columns(3)
+                        
+                        with col1:
+                            st.write(f"**Rol:** {user['rol'].capitalize()}")
+                        
+                        with col2:
+                            st.write(f"**Estado:** Inactivo")
+                        
+                        with col3:
+                            if st.button(f"✅ Reactivar", key=f"react_inact_{user['id']}", type="primary"):
+                                actualizar_usuario_emprendimiento(user['id'], {'activo': True})
+                                st.success(f"✅ Usuario {user['nombre']} reactivado")
+                                st.rerun()
     
     with tab2:
         st.subheader("➕ Agregar Nuevo Usuario")
@@ -3197,11 +3243,24 @@ def pagina_usuarios():
             
             if st.form_submit_button("➕ Agregar Usuario", type="primary"):
                 if nombre and email:
-                    # Verificar que el email no exista ya
+                    # Verificar si el usuario ya existe y está activo
                     usuarios_existentes = obtener_usuarios_emprendimiento()
-                    if not usuarios_existentes.empty and email in usuarios_existentes['email'].values:
-                        st.error("⚠️ Este email ya está agregado")
+                    
+                    if not usuarios_existentes.empty:
+                        usuario_existente = usuarios_existentes[usuarios_existentes['email'] == email]
+                        
+                        if not usuario_existente.empty and usuario_existente.iloc[0]['activo']:
+                            # Ya existe y está activo
+                            st.error("⚠️ Este usuario ya está activo en tu emprendimiento")
+                        else:
+                            # No existe o está inactivo - agregar/reactivar
+                            resultado = agregar_usuario_emprendimiento(email, nombre, rol)
+                            if usuario_existente.empty or not usuario_existente.iloc[0]['activo']:
+                                st.success(f"✅ Usuario {nombre} {'reactivado' if not usuario_existente.empty else 'agregado'} con rol {rol}")
+                            st.balloons()
+                            st.rerun()
                     else:
+                        # No hay usuarios, crear el primero
                         agregar_usuario_emprendimiento(email, nombre, rol)
                         st.success(f"✅ Usuario {nombre} agregado con rol {rol}")
                         st.balloons()
