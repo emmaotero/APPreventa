@@ -3270,7 +3270,7 @@ def pagina_usuarios():
                         col1, col2, col3 = st.columns(3)
                         
                         with col1:
-                            st.write(f"**Rol:** {user['rol'].capitalize()}")
+                            st.write("**Rol:** Usuario")
                         
                         with col2:
                             st.write(f"**Estado:** {'Activo' if user['activo'] else 'Inactivo'}")
@@ -3297,7 +3297,7 @@ def pagina_usuarios():
                         col1, col2, col3 = st.columns(3)
                         
                         with col1:
-                            st.write(f"**Rol:** {user['rol'].capitalize()}")
+                            st.write("**Rol:** Usuario")
                         
                         with col2:
                             st.write(f"**Estado:** Inactivo")
@@ -3318,24 +3318,14 @@ def pagina_usuarios():
                 nombre = st.text_input("Nombre completo *")
                 email = st.text_input("Email *", help="El usuario usará este email para iniciar sesión")
             
-            with col2:
-                rol = st.selectbox(
-                    "Rol *",
-                    ["vendedor", "consulta", "repositor"],
-                    format_func=lambda x: {
-                        'vendedor': '💰 Vendedor - Registra ventas',
-                        'consulta': '📊 Consulta - Solo lectura',
-                        'repositor': '📦 Repositor - Gestiona stock'
-                    }[x]
-                )
-            
             st.info("""
             **Nota importante:** El usuario deberá registrarse primero en la app con este email.
-            Una vez registrado, cuando inicie sesión verá solo las secciones permitidas según su rol.
+            Una vez registrado, cuando inicie sesión verá las secciones permitidas (todo excepto Dashboard y Costos Fijos).
             """)
             
             if st.form_submit_button("➕ Agregar Usuario", type="primary"):
                 if nombre and email:
+                    rol = 'user'  # Siempre rol user
                     # Verificar si el usuario ya existe y está activo
                     usuarios_existentes = obtener_usuarios_emprendimiento()
                     
@@ -3349,13 +3339,13 @@ def pagina_usuarios():
                             # No existe o está inactivo - agregar/reactivar
                             resultado = agregar_usuario_emprendimiento(email, nombre, rol)
                             if usuario_existente.empty or not usuario_existente.iloc[0]['activo']:
-                                st.success(f"✅ Usuario {nombre} {'reactivado' if not usuario_existente.empty else 'agregado'} con rol {rol}")
+                                st.success(f"✅ Usuario {nombre} {'reactivado' if not usuario_existente.empty else 'agregado'}")
                             st.balloons()
                             st.rerun()
                     else:
                         # No hay usuarios, crear el primero
                         agregar_usuario_emprendimiento(email, nombre, rol)
-                        st.success(f"✅ Usuario {nombre} agregado con rol {rol}")
+                        st.success(f"✅ Usuario {nombre} agregado")
                         st.balloons()
                         st.rerun()
                 else:
@@ -3367,45 +3357,32 @@ def pagina_usuarios():
         st.markdown("""
         ### 🔑 ADMIN (Administrador)
         **Acceso total al sistema**
-        - ✅ Ver y editar todo
-        - ✅ Gestionar usuarios
-        - ✅ Eliminar datos
+        - ✅ Ver Dashboard completo
+        - ✅ Ver y editar Stock
+        - ✅ Registrar Compras y Ventas
+        - ✅ Gestionar Clientes
+        - ✅ Ver Costos Fijos
+        - ✅ Gestionar Usuarios
         - ✅ Configuración avanzada
         - ✅ Importación masiva
         
-        ---
-        
-        ### 💰 VENDEDOR
-        **Enfocado en ventas diarias**
-        - ✅ Ver stock (solo lectura)
-        - ✅ Registrar ventas
-        - ✅ Agregar/editar clientes
-        - ✅ Ver dashboard
-        - ❌ No ve costos
-        - ❌ No edita productos
-        - ❌ No elimina datos
+        **El dueño del emprendimiento es siempre ADMIN**
         
         ---
         
-        ### 📊 CONSULTA
-        **Solo lectura de reportes**
-        - ✅ Ver dashboard
-        - ✅ Ver reportes
-        - ✅ Ver stock
-        - ✅ Ver ventas
-        - ❌ No puede editar nada
-        - ❌ No ve costos
-        
-        ---
-        
-        ### 📦 REPOSITOR
-        **Gestión de inventario**
-        - ✅ Ver y editar stock
-        - ✅ Registrar compras
+        ### 👤 USER (Usuario)
+        **Acceso completo excepto Dashboard y Costos**
+        - ✅ Ver y editar Stock
+        - ✅ Registrar Compras y Ventas
+        - ✅ Gestionar Clientes
+        - ✅ Proveedores y Categorías
+        - ✅ Lista de Precios
         - ✅ Importación masiva
-        - ✅ Ajustar inventario
-        - ❌ No registra ventas
-        - ❌ No ve costos
+        - ❌ **NO ve Dashboard**
+        - ❌ **NO ve Costos Fijos**
+        - ❌ **NO gestiona Usuarios**
+        
+        **Los empleados agregados son siempre USER**
         """)
 
 def pagina_lista_precios():
