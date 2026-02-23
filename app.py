@@ -2628,17 +2628,48 @@ def pagina_ventas():
             key="selector_producto_venta"
         )
         
-        # Obtener precio sugerido del producto seleccionado
-        precio_sugerido = None
+        # Obtener precios del producto seleccionado
+        precio_final = None
+        precio_con_descuento = None
+        precio_con_recargo = None
+        
         lista_precios = obtener_lista_precios()
         if not lista_precios.empty and producto_id:
             producto_precio = lista_precios[lista_precios['producto_id'] == producto_id]
             if not producto_precio.empty:
-                precio_sugerido = float(producto_precio.iloc[0]['precio_final'])
+                precio_final = float(producto_precio.iloc[0]['precio_final'])
+                
+                # Calcular precios con descuento y recargo (usando valores por defecto)
+                descuento_default = 10.0  # 10%
+                recargo_default = 15.0    # 15%
+                
+                precio_con_descuento = precio_final * (1 - descuento_default / 100)
+                precio_con_recargo = precio_final * (1 + recargo_default / 100)
         
-        # Mostrar precio sugerido
-        if precio_sugerido:
-            st.info(f"💡 **Precio sugerido para este producto:** {formato_moneda(precio_sugerido)}")
+        # Mostrar precios sugeridos en cards
+        if precio_final:
+            st.markdown("### 💰 Precios de Referencia")
+            col_p1, col_p2, col_p3 = st.columns(3)
+            
+            with col_p1:
+                st.info(f"""
+                **💵 Precio Final**  
+                {formato_moneda(precio_final)}
+                """)
+            
+            with col_p2:
+                st.success(f"""
+                **🔽 Con Descuento 10%**  
+                {formato_moneda(precio_con_descuento)}
+                """)
+            
+            with col_p3:
+                st.warning(f"""
+                **🔼 Con Recargo 15%**  
+                {formato_moneda(precio_con_recargo)}
+                """)
+            
+            st.caption("💡 Estos son precios de referencia. Podés cargar el precio que quieras abajo.")
         
         with st.form("nueva_venta"):
             col1, col2, col3 = st.columns(3)
