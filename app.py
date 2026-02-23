@@ -2220,34 +2220,34 @@ def pagina_productos():
                     st.error("Completá los campos obligatorios (*)")
     
     with tab3:
-            st.subheader("📤 Importación Masiva de Productos")
-            
-            st.info("""
-            **¿Cómo funciona?**
-            1. Descargá el template de Excel
-            2. Completalo con tus productos
-            3. Subí el archivo y revisá el preview
-            4. Confirmá la importación
-            
-            ✨ Las categorías y proveedores que no existan se crearán automáticamente
-            """)
-            
-            col1, col2 = st.columns([1, 2])
-            
-            with col1:
-                st.download_button(
-                    label="📥 Descargar Template Excel",
-                    data=generar_template_importacion(),
-                    file_name=f"template_productos_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    type="primary"
-                )
-            
-            with col2:
-                st.write("**Campos obligatorios:**")
-                st.write("• Nombre del producto")
-                st.write("• Categoría")  
-                st.write("• Precio de compra")
+        st.subheader("📤 Importación Masiva de Productos")
+        
+        st.info("""
+        **¿Cómo funciona?**
+        1. Descargá el template de Excel
+        2. Completalo con tus productos
+        3. Subí el archivo y revisá el preview
+        4. Confirmá la importación
+        
+        ✨ Las categorías y proveedores que no existan se crearán automáticamente
+        """)
+        
+        col1, col2 = st.columns([1, 2])
+        
+        with col1:
+            st.download_button(
+                label="📥 Descargar Template Excel",
+                data=generar_template_importacion(),
+                file_name=f"template_productos_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary"
+            )
+        
+        with col2:
+            st.write("**Campos obligatorios:**")
+            st.write("• Nombre del producto")
+            st.write("• Categoría")  
+            st.write("• Precio de compra")
         
         st.divider()
         
@@ -2305,7 +2305,7 @@ def pagina_productos():
                     
                     if resultados['errores'] > 0:
                         st.warning(f"⚠️ {resultados['errores']} filas tuvieron errores. Revisá los detalles arriba.")
-                
+            
             except Exception as e:
                 st.error(f"Error al leer el archivo: {str(e)}")
                 st.info("Asegurate de que el archivo tenga una hoja llamada 'Productos' con las columnas correctas")
