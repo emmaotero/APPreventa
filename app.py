@@ -2234,20 +2234,20 @@ def pagina_productos():
             
             col1, col2 = st.columns([1, 2])
             
-                with col1:
+            with col1:
                 st.download_button(
-                label="📥 Descargar Template Excel",
-                data=generar_template_importacion(),
-                file_name=f"template_productos_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                type="primary"
+                    label="📥 Descargar Template Excel",
+                    data=generar_template_importacion(),
+                    file_name=f"template_productos_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    type="primary"
                 )
             
-                with col2:
+            with col2:
                 st.write("**Campos obligatorios:**")
                 st.write("• Nombre del producto")
-                    st.write("• Categoría")  
-            st.write("• Precio de compra")
+                st.write("• Categoría")  
+                st.write("• Precio de compra")
         
         st.divider()
         
