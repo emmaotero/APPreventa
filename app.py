@@ -52,6 +52,10 @@ supabase = init_supabase()
 
 def obtener_rol_usuario(email=None):
     """Obtiene el rol del usuario"""
+    # Si hay un rol guardado en la sesión del emprendimiento actual, usarlo
+    if 'rol_actual' in st.session_state:
+        return st.session_state.rol_actual
+    
     if not email:
         usuario = obtener_usuario_actual()
         if not usuario:
@@ -142,6 +146,39 @@ def actualizar_usuario_emprendimiento(usuario_emp_id, datos):
 def eliminar_usuario_emprendimiento(usuario_emp_id):
     """Elimina (desactiva) un usuario del emprendimiento"""
     return supabase.table("usuarios_emprendimiento").update({"activo": False}).eq("id", usuario_emp_id).execute().data
+
+def obtener_emprendimientos_disponibles(email):
+    """Obtiene todos los emprendimientos donde el usuario tiene acceso"""
+    emprendimientos = []
+    
+    # 1. Verificar si es dueño de un emprendimiento
+    response = supabase.table("usuarios").select("*").eq("email", email).execute()
+    if response.data:
+        usuario = response.data[0]
+        emprendimientos.append({
+            'tipo': 'principal',
+            'usuario_id': usuario['id'],
+            'nombre': f"Mi Emprendimiento",
+            'rol': 'admin',
+            'email': email
+        })
+    
+    # 2. Verificar en qué emprendimientos es empleado
+    response = supabase.table("usuarios_emprendimiento").select("*, usuarios!usuarios_emprendimiento_usuario_principal_id_fkey(nombre)").eq("email", email).eq("activo", True).execute()
+    if response.data:
+        for emp in response.data:
+            # Obtener nombre del dueño del emprendimiento
+            nombre_dueno = emp.get('usuarios', {}).get('nombre', 'Emprendimiento')
+            emprendimientos.append({
+                'tipo': 'empleado',
+                'usuario_id': emp['usuario_principal_id'],
+                'nombre': f"Emprendimiento de {nombre_dueno}",
+                'rol': emp['rol'],
+                'email': email,
+                'emp_id': emp['id']
+            })
+    
+    return emprendimientos
 
 # ============================================
 # SISTEMA DE AUTENTICACIÓN
@@ -1363,6 +1400,68 @@ def obtener_comparativa_mes_anterior():
 def pagina_login():
     st.title("🔐 Sistema de Reventa")
     
+    # Si tiene emprendimientos disponibles, mostrar selector
+    if 'emprendimientos_disponibles' in st.session_state and st.session_state.emprendimientos_disponibles:
+        col1, col2, col3 = st.columns([1, 2, 1])
+        
+        with col2:
+            st.subheader("📍 Seleccioná tu emprendimiento")
+            st.info(f"👤 {st.session_state.email_login}")
+            
+            emprendimientos = st.session_state.emprendimientos_disponibles
+            
+            for i, emp in enumerate(emprendimientos):
+                rol_emoji = {
+                    'admin': '👑',
+                    'vendedor': '💰',
+                    'consulta': '📊',
+                    'repositor': '📦'
+                }
+                
+                col_btn, col_info = st.columns([3, 1])
+                
+                with col_btn:
+                    if st.button(
+                        f"{rol_emoji.get(emp['rol'], '👤')} {emp['nombre']}",
+                        key=f"emp_{i}",
+                        use_container_width=True,
+                        type="primary" if i == 0 else "secondary"
+                    ):
+                        # Guardar emprendimiento seleccionado
+                        # Obtener usuario completo
+                        if emp['tipo'] == 'principal':
+                            usuario = supabase.table("usuarios").select("*").eq("email", emp['email']).execute().data[0]
+                        else:
+                            # Es empleado, crear objeto usuario temporal
+                            usuario = {
+                                'id': emp['usuario_id'],
+                                'email': emp['email'],
+                                'nombre': emp['email'].split('@')[0].title(),
+                                'rol': emp['rol']
+                            }
+                        
+                        st.session_state.usuario = usuario
+                        st.session_state.emprendimiento_actual = emp
+                        st.session_state.rol_actual = emp['rol']
+                        
+                        # Limpiar selector
+                        del st.session_state.emprendimientos_disponibles
+                        del st.session_state.email_login
+                        
+                        st.rerun()
+                
+                with col_info:
+                    st.caption(f"{emp['rol'].capitalize()}")
+            
+            st.divider()
+            
+            if st.button("← Volver al login", use_container_width=True):
+                del st.session_state.emprendimientos_disponibles
+                del st.session_state.email_login
+                st.rerun()
+        
+        return
+    
     col1, col2, col3 = st.columns([1, 2, 1])
     
     with col2:
@@ -1379,9 +1478,22 @@ def pagina_login():
                     if email and password:
                         usuario = login_usuario(email, password)
                         if usuario:
-                            st.session_state.usuario = usuario
-                            st.success(f"¡Bienvenido {usuario['nombre']}!")
-                            st.rerun()
+                            # Obtener emprendimientos disponibles
+                            emprendimientos = obtener_emprendimientos_disponibles(email)
+                            
+                            if len(emprendimientos) > 1:
+                                # Tiene múltiples emprendimientos, guardar opciones y mostrar selector
+                                st.session_state.emprendimientos_disponibles = emprendimientos
+                                st.session_state.email_login = email
+                                st.rerun()
+                            elif len(emprendimientos) == 1:
+                                # Solo tiene un emprendimiento, entrar directamente
+                                st.session_state.usuario = usuario
+                                st.session_state.emprendimiento_actual = emprendimientos[0]
+                                st.success(f"¡Bienvenido {usuario['nombre']}!")
+                                st.rerun()
+                            else:
+                                st.error("No tenés acceso a ningún emprendimiento")
                         else:
                             st.error("Email o contraseña incorrectos")
                     else:
@@ -3661,6 +3773,11 @@ def main():
         st.title("📦 Sistema de Reventa")
         st.write(f"👤 {usuario['nombre']}")
         
+        # Mostrar emprendimiento actual
+        if 'emprendimiento_actual' in st.session_state:
+            emp = st.session_state.emprendimiento_actual
+            st.caption(f"📍 {emp['nombre']}")
+        
         # Mostrar rol si no es admin
         if rol != 'admin':
             rol_emoji = {
@@ -3711,7 +3828,20 @@ def main():
         
         st.divider()
         
-        if st.button("🚪 Cerrar Sesión"):
+        # Botón para cambiar emprendimiento si tiene más de uno
+        emprendimientos = obtener_emprendimientos_disponibles(usuario['email'])
+        if len(emprendimientos) > 1:
+            if st.button("🔄 Cambiar Emprendimiento", use_container_width=True):
+                st.session_state.emprendimientos_disponibles = emprendimientos
+                st.session_state.email_login = usuario['email']
+                # Limpiar sesión actual
+                if 'emprendimiento_actual' in st.session_state:
+                    del st.session_state.emprendimiento_actual
+                if 'rol_actual' in st.session_state:
+                    del st.session_state.rol_actual
+                st.rerun()
+        
+        if st.button("🚪 Cerrar Sesión", use_container_width=True):
             cerrar_sesion()
         
         st.caption("v2.1.0")
@@ -3743,3 +3873,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
