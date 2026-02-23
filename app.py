@@ -2629,7 +2629,8 @@ def pagina_ventas():
         )
         
         # Obtener precios del producto seleccionado
-        precio_final = None
+        precio_sugerido = None
+        precio_definido = None
         precio_con_descuento = None
         precio_con_recargo = None
         
@@ -2637,33 +2638,42 @@ def pagina_ventas():
         if not lista_precios.empty and producto_id:
             producto_precio = lista_precios[lista_precios['producto_id'] == producto_id]
             if not producto_precio.empty:
-                precio_final = float(producto_precio.iloc[0]['precio_final'])
+                # Precio sugerido (calculado con el margen teórico)
+                precio_sugerido = float(producto_precio.iloc[0]['precio_sugerido'])
+                # Precio definido (el que estableciste en la lista)
+                precio_definido = float(producto_precio.iloc[0]['precio_final'])
                 
                 # Calcular precios con descuento y recargo (usando valores por defecto)
                 descuento_default = 10.0  # 10%
                 recargo_default = 15.0    # 15%
                 
-                precio_con_descuento = precio_final * (1 - descuento_default / 100)
-                precio_con_recargo = precio_final * (1 + recargo_default / 100)
+                precio_con_descuento = precio_definido * (1 - descuento_default / 100)
+                precio_con_recargo = precio_definido * (1 + recargo_default / 100)
         
-        # Mostrar precios sugeridos en cards
-        if precio_final:
+        # Mostrar precios de referencia en cards
+        if precio_definido:
             st.markdown("### 💰 Precios de Referencia")
-            col_p1, col_p2, col_p3 = st.columns(3)
+            col_p1, col_p2, col_p3, col_p4 = st.columns(4)
             
             with col_p1:
                 st.info(f"""
-                **💵 Precio Final**  
-                {formato_moneda(precio_final)}
+                **💡 Precio Sugerido**  
+                {formato_moneda(precio_sugerido)}
                 """)
             
             with col_p2:
+                st.success(f"""
+                **💵 Precio Definido**  
+                {formato_moneda(precio_definido)}
+                """)
+            
+            with col_p3:
                 st.success(f"""
                 **🔽 Con Descuento 10%**  
                 {formato_moneda(precio_con_descuento)}
                 """)
             
-            with col_p3:
+            with col_p4:
                 st.warning(f"""
                 **🔼 Con Recargo 15%**  
                 {formato_moneda(precio_con_recargo)}
