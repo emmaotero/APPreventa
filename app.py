@@ -147,39 +147,6 @@ def eliminar_usuario_emprendimiento(usuario_emp_id):
     """Elimina (desactiva) un usuario del emprendimiento"""
     return supabase.table("usuarios_emprendimiento").update({"activo": False}).eq("id", usuario_emp_id).execute().data
 
-def obtener_emprendimientos_disponibles(email):
-    """Obtiene todos los emprendimientos donde el usuario tiene acceso"""
-    emprendimientos = []
-    
-    # 1. Verificar si es dueño de un emprendimiento
-    response = supabase.table("usuarios").select("*").eq("email", email).execute()
-    if response.data:
-        usuario = response.data[0]
-        emprendimientos.append({
-            'tipo': 'principal',
-            'usuario_id': usuario['id'],
-            'nombre': f"Mi Emprendimiento",
-            'rol': 'admin',
-            'email': email
-        })
-    
-    # 2. Verificar en qué emprendimientos es empleado
-    response = supabase.table("usuarios_emprendimiento").select("*, usuarios!usuarios_emprendimiento_usuario_principal_id_fkey(nombre)").eq("email", email).eq("activo", True).execute()
-    if response.data:
-        for emp in response.data:
-            # Obtener nombre del dueño del emprendimiento
-            nombre_dueno = emp.get('usuarios', {}).get('nombre', 'Emprendimiento')
-            emprendimientos.append({
-                'tipo': 'empleado',
-                'usuario_id': emp['usuario_principal_id'],
-                'nombre': f"Emprendimiento de {nombre_dueno}",
-                'rol': emp['rol'],
-                'email': email,
-                'emp_id': emp['id']
-            })
-    
-    return emprendimientos
-
 # ============================================
 # SISTEMA DE AUTENTICACIÓN
 # ============================================
@@ -1478,22 +1445,10 @@ def pagina_login():
                     if email and password:
                         usuario = login_usuario(email, password)
                         if usuario:
-                            # Obtener emprendimientos disponibles
-                            emprendimientos = obtener_emprendimientos_disponibles(email)
-                            
-                            if len(emprendimientos) > 1:
-                                # Tiene múltiples emprendimientos, guardar opciones y mostrar selector
-                                st.session_state.emprendimientos_disponibles = emprendimientos
-                                st.session_state.email_login = email
-                                st.rerun()
-                            elif len(emprendimientos) == 1:
-                                # Solo tiene un emprendimiento, entrar directamente
-                                st.session_state.usuario = usuario
-                                st.session_state.emprendimiento_actual = emprendimientos[0]
-                                st.success(f"¡Bienvenido {usuario['nombre']}!")
-                                st.rerun()
-                            else:
-                                st.error("No tenés acceso a ningún emprendimiento")
+                            # Login directo (solución simple: un email = un emprendimiento)
+                            st.session_state.usuario = usuario
+                            st.success(f"¡Bienvenido {usuario['nombre']}!")
+                            st.rerun()
                         else:
                             st.error("Email o contraseña incorrectos")
                     else:
@@ -3828,19 +3783,6 @@ def main():
         
         st.divider()
         
-        # Botón para cambiar emprendimiento si tiene más de uno
-        emprendimientos = obtener_emprendimientos_disponibles(usuario['email'])
-        if len(emprendimientos) > 1:
-            if st.button("🔄 Cambiar Emprendimiento", use_container_width=True):
-                st.session_state.emprendimientos_disponibles = emprendimientos
-                st.session_state.email_login = usuario['email']
-                # Limpiar sesión actual
-                if 'emprendimiento_actual' in st.session_state:
-                    del st.session_state.emprendimiento_actual
-                if 'rol_actual' in st.session_state:
-                    del st.session_state.rol_actual
-                st.rerun()
-        
         if st.button("🚪 Cerrar Sesión", use_container_width=True):
             cerrar_sesion()
         
@@ -3873,4 +3815,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
