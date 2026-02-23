@@ -3173,26 +3173,26 @@ def pagina_usuarios():
                 st.info("No hay usuarios activos")
             else:
                 for _, user in usuarios_activos.iterrows():
-                with st.expander(f"{'🟢' if user['activo'] else '🔴'} {user['nombre']} ({user['email']})"):
-                    col1, col2, col3 = st.columns(3)
-                    
-                    with col1:
-                        st.write(f"**Rol:** {user['rol'].capitalize()}")
-                    
-                    with col2:
-                        st.write(f"**Estado:** {'Activo' if user['activo'] else 'Inactivo'}")
-                    
-                    with col3:
-                        if user['activo']:
-                            if st.button(f"🗑️ Desactivar", key=f"del_{user['id']}"):
-                                eliminar_usuario_emprendimiento(user['id'])
-                                st.success(f"✅ Usuario {user['nombre']} desactivado")
-                                st.rerun()
-                        else:
-                            if st.button(f"✅ Reactivar", key=f"react_{user['id']}", type="primary"):
-                                actualizar_usuario_emprendimiento(user['id'], {'activo': True})
-                                st.success(f"✅ Usuario {user['nombre']} reactivado")
-                                st.rerun()
+                    with st.expander(f"🟢 {user['nombre']} ({user['email']})"):
+                        col1, col2, col3 = st.columns(3)
+                        
+                        with col1:
+                            st.write(f"**Rol:** {user['rol'].capitalize()}")
+                        
+                        with col2:
+                            st.write(f"**Estado:** {'Activo' if user['activo'] else 'Inactivo'}")
+                        
+                        with col3:
+                            if user['activo']:
+                                if st.button(f"🗑️ Desactivar", key=f"del_{user['id']}"):
+                                    eliminar_usuario_emprendimiento(user['id'])
+                                    st.success(f"✅ Usuario {user['nombre']} desactivado")
+                                    st.rerun()
+                            else:
+                                if st.button(f"✅ Reactivar", key=f"react_{user['id']}", type="primary"):
+                                    actualizar_usuario_emprendimiento(user['id'], {'activo': True})
+                                    st.success(f"✅ Usuario {user['nombre']} reactivado")
+                                    st.rerun()
             
             # Mostrar inactivos si hay
             if not usuarios_inactivos.empty:
