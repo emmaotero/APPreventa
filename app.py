@@ -2135,16 +2135,8 @@ def pagina_productos():
             st.info("No hay productos registrados")
     
     with tab2:
-        if not tiene_permiso('editar_stock'):
-            st.warning("⛔ No tenés permiso para crear productos")
-            st.info("💡 Contactá al administrador si necesitás acceso")
-        else:
-            categorias = obtener_categorias()
-            proveedores = obtener_proveedores()
-        
-        if not tiene_permiso('editar_stock'):
-            pass  # No mostrar nada más
-        else:
+        categorias = obtener_categorias()
+        proveedores = obtener_proveedores()
         
         with st.form("nuevo_producto"):
             st.subheader("Información Básica")
@@ -2163,28 +2155,28 @@ def pagina_productos():
                     [None] + proveedores['id'].tolist(),
                     format_func=lambda x: "Sin proveedor" if x is None else proveedores[proveedores['id']==x]['nombre'].values[0]
                 ) if not proveedores.empty else None
-            
-            with col2:
+                
+                with col2:
                 marca = st.text_input("Marca")
                 variedad = st.text_input("Variedad")
                 presentacion = st.text_input("Presentación")
                 unidad = st.selectbox("Unidad", ["Unidad", "kg", "gr", "ltr", "ml", "pack", "caja", "docena"])
                 ubicacion = st.text_input("Ubicación Física")
-            
-            detalle = st.text_area("Detalle / Otro")
-            
-            st.divider()
-            st.subheader("Precios y Stock")
-            
-            col1, col2 = st.columns(2)
-            with col1:
+                
+                detalle = st.text_area("Detalle / Otro")
+                
+                st.divider()
+                st.subheader("Precios y Stock")
+                
+                col1, col2 = st.columns(2)
+                with col1:
                 precio_compra = st.number_input("Precio Costo *", min_value=0.0, step=0.01)
                 stock_inicial = st.number_input("Stock Inicial", min_value=0, step=1)
-            with col2:
+                with col2:
                 stock_minimo = st.number_input("Stock Mínimo", min_value=0, step=1, value=0)
-            
-            # Mostrar código que se generará
-            if nombre and categoria_id:
+                
+                # Mostrar código que se generará
+                if nombre and categoria_id:
                 cat_seleccionada = categorias[categorias['id']==categoria_id].iloc[0]
                 codigo_cat = cat_seleccionada.get('codigo_categoria', '')
                 if not codigo_cat:
@@ -2193,8 +2185,8 @@ def pagina_productos():
                     codigo_cat = generar_codigo_categoria(cat_nombre, categorias)
                 codigo_preview = f"{codigo_cat}-0001"
                 st.info(f"📋 Código que se asignará: **{codigo_preview}** (aproximado)")
-            
-            if st.form_submit_button("✅ Crear Producto"):
+                
+                if st.form_submit_button("✅ Crear Producto"):
                 if nombre and categoria_id:
                     cat_seleccionada = categorias[categorias['id']==categoria_id].iloc[0]
                     codigo_cat = cat_seleccionada.get('codigo_categoria', '')
@@ -2228,33 +2220,33 @@ def pagina_productos():
                     st.error("Completá los campos obligatorios (*)")
     
     with tab3:
-        st.subheader("📤 Importación Masiva de Productos")
-        
-        st.info("""
-        **¿Cómo funciona?**
-        1. Descargá el template de Excel
-        2. Completalo con tus productos
-        3. Subí el archivo y revisá el preview
-        4. Confirmá la importación
-        
-        ✨ Las categorías y proveedores que no existan se crearán automáticamente
-        """)
-        
-        col1, col2 = st.columns([1, 2])
-        
-        with col1:
-            st.download_button(
+            st.subheader("📤 Importación Masiva de Productos")
+            
+            st.info("""
+            **¿Cómo funciona?**
+            1. Descargá el template de Excel
+            2. Completalo con tus productos
+            3. Subí el archivo y revisá el preview
+            4. Confirmá la importación
+            
+            ✨ Las categorías y proveedores que no existan se crearán automáticamente
+            """)
+            
+            col1, col2 = st.columns([1, 2])
+            
+            with col1:
+                st.download_button(
                 label="📥 Descargar Template Excel",
                 data=generar_template_importacion(),
                 file_name=f"template_productos_{datetime.now().strftime('%Y%m%d')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 type="primary"
-            )
-        
-        with col2:
-            st.write("**Campos obligatorios:**")
-            st.write("• Nombre del producto")
-            st.write("• Categoría")  
+                )
+            
+            with col2:
+                st.write("**Campos obligatorios:**")
+                st.write("• Nombre del producto")
+                    st.write("• Categoría")  
             st.write("• Precio de compra")
         
         st.divider()
