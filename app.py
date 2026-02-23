@@ -52,27 +52,16 @@ supabase = init_supabase()
 
 def obtener_rol_usuario(email=None):
     """Obtiene el rol del usuario"""
-    # Si hay un rol guardado en la sesión del emprendimiento actual, usarlo
-    if 'rol_actual' in st.session_state:
-        return st.session_state.rol_actual
+    usuario = obtener_usuario_actual()
+    if not usuario:
+        return 'admin'
     
-    if not email:
-        usuario = obtener_usuario_actual()
-        if not usuario:
-            return 'admin'
-        email = usuario['email']
+    # Si es empleado, usar su rol_real
+    if usuario.get('es_empleado'):
+        return usuario.get('rol_real', 'vendedor')
     
-    # Primero buscar en usuarios principales
-    response = supabase.table("usuarios").select("rol").eq("email", email).execute()
-    if response.data:
-        return response.data[0].get('rol', 'admin')
-    
-    # Si no está, buscar en usuarios_emprendimiento
-    response = supabase.table("usuarios_emprendimiento").select("rol").eq("email", email).eq("activo", True).execute()
-    if response.data:
-        return response.data[0].get('rol', 'vendedor')
-    
-    return 'admin'  # Por defecto
+    # Si es dueño, es admin
+    return usuario.get('rol', 'admin')
 
 def obtener_permisos_rol(rol):
     """Obtiene los permisos de un rol"""
@@ -166,27 +155,49 @@ def login_usuario(email, password):
         return None
 
 def registrar_usuario(email, nombre, password):
-    """Registra un nuevo usuario"""
+    """Registra un nuevo usuario o activa credenciales de empleado"""
     try:
-        nuevo_usuario = {
-            'email': email,
-            'nombre': nombre,
-            'password_hash': hash_password(password)
-        }
-        response = supabase.table("usuarios").insert(nuevo_usuario).execute()
+        # Verificar si el email ya fue agregado como empleado
+        emp_response = supabase.table("usuarios_emprendimiento").select("*").eq("email", email).execute()
         
-        # Crear categorías por defecto
-        if response.data:
-            usuario_id = response.data[0]['id']
-            categorias_default = [
-                {'nombre': 'Electrónica', 'usuario_id': usuario_id},
-                {'nombre': 'Ropa', 'usuario_id': usuario_id},
-                {'nombre': 'Hogar', 'usuario_id': usuario_id},
-                {'nombre': 'Otros', 'usuario_id': usuario_id}
-            ]
-            supabase.table("categorias").insert(categorias_default).execute()
-        
-        return response.data[0] if response.data else None
+        if emp_response.data:
+            # Es un empleado - crear credenciales en tabla separada
+            credencial = {
+                'email': email,
+                'password_hash': hash_password(password)
+            }
+            # Crear tabla de credenciales si no existe, o usar usuarios con flag especial
+            # Por ahora, guardar en usuarios pero sin crear emprendimiento
+            nuevo_usuario = {
+                'email': email,
+                'nombre': nombre,
+                'password_hash': hash_password(password),
+                'rol': 'empleado'  # Flag para saber que es empleado
+            }
+            response = supabase.table("usuarios").insert(nuevo_usuario).execute()
+            return response.data[0] if response.data else None
+        else:
+            # Es un dueño nuevo - crear emprendimiento completo
+            nuevo_usuario = {
+                'email': email,
+                'nombre': nombre,
+                'password_hash': hash_password(password),
+                'rol': 'admin'
+            }
+            response = supabase.table("usuarios").insert(nuevo_usuario).execute()
+            
+            # Crear categorías por defecto solo para dueños
+            if response.data:
+                usuario_id = response.data[0]['id']
+                categorias_default = [
+                    {'nombre': 'Electrónica', 'usuario_id': usuario_id},
+                    {'nombre': 'Ropa', 'usuario_id': usuario_id},
+                    {'nombre': 'Hogar', 'usuario_id': usuario_id},
+                    {'nombre': 'Otros', 'usuario_id': usuario_id}
+                ]
+                supabase.table("categorias").insert(categorias_default).execute()
+            
+            return response.data[0] if response.data else None
     except Exception as e:
         st.error(f"Error al registrar: {str(e)}")
         return None
@@ -196,9 +207,24 @@ def verificar_sesion():
     return 'usuario' in st.session_state
 
 def obtener_usuario_actual():
-    """Obtiene el usuario de la sesión actual"""
+    """Obtiene el usuario de la sesión actual con contexto de empleado si aplica"""
     if 'usuario' in st.session_state:
-        return st.session_state.usuario
+        usuario = st.session_state.usuario
+        
+        # Si es empleado, obtener el contexto del emprendimiento donde trabaja
+        if usuario.get('rol') == 'empleado':
+            emp_data = supabase.table("usuarios_emprendimiento").select("usuario_principal_id, rol").eq("email", usuario['email']).eq("activo", True).execute()
+            if emp_data.data:
+                # Retornar datos modificados: el ID del emprendimiento principal
+                return {
+                    'id': emp_data.data[0]['usuario_principal_id'],  # ID del dueño
+                    'email': usuario['email'],
+                    'nombre': usuario['nombre'],
+                    'rol_real': emp_data.data[0]['rol'],  # vendedor, consulta, etc.
+                    'es_empleado': True
+                }
+        
+        return usuario
     return None
 
 def cerrar_sesion():
