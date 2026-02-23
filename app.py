@@ -47,6 +47,91 @@ def init_supabase() -> Client:
 supabase = init_supabase()
 
 # ============================================
+# SISTEMA DE ROLES Y PERMISOS
+# ============================================
+
+def obtener_rol_usuario(email=None):
+    """Obtiene el rol del usuario"""
+    if not email:
+        usuario = obtener_usuario_actual()
+        if not usuario:
+            return 'admin'
+        email = usuario['email']
+    
+    # Primero buscar en usuarios principales
+    response = supabase.table("usuarios").select("rol").eq("email", email).execute()
+    if response.data:
+        return response.data[0].get('rol', 'admin')
+    
+    # Si no está, buscar en usuarios_emprendimiento
+    response = supabase.table("usuarios_emprendimiento").select("rol").eq("email", email).eq("activo", True).execute()
+    if response.data:
+        return response.data[0].get('rol', 'vendedor')
+    
+    return 'admin'  # Por defecto
+
+def obtener_permisos_rol(rol):
+    """Obtiene los permisos de un rol"""
+    response = supabase.table("permisos_roles").select("permisos").eq("rol", rol).execute()
+    if response.data:
+        return response.data[0]['permisos']
+    return {}
+
+def tiene_permiso(permiso):
+    """Verifica si el usuario actual tiene un permiso específico"""
+    usuario = obtener_usuario_actual()
+    if not usuario:
+        return False
+    
+    rol = obtener_rol_usuario(usuario['email'])
+    permisos = obtener_permisos_rol(rol)
+    
+    return permisos.get(permiso, False)
+
+def requiere_permiso(permiso, mensaje_error=None):
+    """Función para requerir un permiso. Detiene ejecución si no lo tiene."""
+    if not tiene_permiso(permiso):
+        if mensaje_error:
+            st.error(f"⛔ {mensaje_error}")
+        else:
+            st.error(f"⛔ No tenés permiso para realizar esta acción")
+        st.info("💡 Contactá al administrador si necesitás acceso")
+        st.stop()
+
+def obtener_usuarios_emprendimiento():
+    """Obtiene la lista de usuarios del emprendimiento actual"""
+    usuario = obtener_usuario_actual()
+    if not usuario:
+        return pd.DataFrame()
+    
+    response = supabase.table("usuarios_emprendimiento").select("*").eq("usuario_principal_id", usuario['id']).order("nombre").execute()
+    return pd.DataFrame(response.data) if response.data else pd.DataFrame()
+
+def agregar_usuario_emprendimiento(email, nombre, rol):
+    """Agrega un usuario al emprendimiento"""
+    usuario = obtener_usuario_actual()
+    if not usuario:
+        return None
+    
+    data = {
+        'usuario_principal_id': usuario['id'],
+        'email': email,
+        'nombre': nombre,
+        'rol': rol,
+        'activo': True
+    }
+    
+    return supabase.table("usuarios_emprendimiento").insert(data).execute().data
+
+def actualizar_usuario_emprendimiento(usuario_emp_id, datos):
+    """Actualiza un usuario del emprendimiento"""
+    return supabase.table("usuarios_emprendimiento").update(datos).eq("id", usuario_emp_id).execute().data
+
+def eliminar_usuario_emprendimiento(usuario_emp_id):
+    """Elimina (desactiva) un usuario del emprendimiento"""
+    return supabase.table("usuarios_emprendimiento").update({"activo": False}).eq("id", usuario_emp_id).execute().data
+
+# ============================================
 # SISTEMA DE AUTENTICACIÓN
 # ============================================
 
@@ -2050,8 +2135,16 @@ def pagina_productos():
             st.info("No hay productos registrados")
     
     with tab2:
-        categorias = obtener_categorias()
-        proveedores = obtener_proveedores()
+        if not tiene_permiso('editar_stock'):
+            st.warning("⛔ No tenés permiso para crear productos")
+            st.info("💡 Contactá al administrador si necesitás acceso")
+        else:
+            categorias = obtener_categorias()
+            proveedores = obtener_proveedores()
+        
+        if not tiene_permiso('editar_stock'):
+            pass  # No mostrar nada más
+        else:
         
         with st.form("nuevo_producto"):
             st.subheader("Información Básica")
@@ -3050,6 +3143,127 @@ def pagina_categorias():
                     st.success("✅ Categoría eliminada")
                     st.rerun()
 
+def pagina_usuarios():
+    st.title("⚙️ Gestión de Usuarios")
+    
+    # Solo ADMIN puede acceder
+    requiere_permiso('gestionar_usuarios', 'Solo el administrador puede gestionar usuarios')
+    
+    st.info("💡 Agregá empleados o colaboradores para que puedan usar el sistema con diferentes niveles de acceso")
+    
+    tab1, tab2, tab3 = st.tabs(["📋 Usuarios Activos", "➕ Agregar Usuario", "📖 Roles y Permisos"])
+    
+    with tab1:
+        usuarios = obtener_usuarios_emprendimiento()
+        
+        if usuarios.empty:
+            st.info("No hay usuarios adicionales. Podés agregar empleados o colaboradores.")
+        else:
+            st.subheader(f"👥 Usuarios del emprendimiento ({len(usuarios)})")
+            
+            for _, user in usuarios.iterrows():
+                with st.expander(f"{'🟢' if user['activo'] else '🔴'} {user['nombre']} ({user['email']})"):
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        st.write(f"**Rol:** {user['rol'].capitalize()}")
+                    
+                    with col2:
+                        st.write(f"**Estado:** {'Activo' if user['activo'] else 'Inactivo'}")
+                    
+                    with col3:
+                        if st.button(f"🗑️ Desactivar", key=f"del_{user['id']}"):
+                            eliminar_usuario_emprendimiento(user['id'])
+                            st.success(f"✅ Usuario {user['nombre']} desactivado")
+                            st.rerun()
+    
+    with tab2:
+        st.subheader("➕ Agregar Nuevo Usuario")
+        
+        with st.form("nuevo_usuario_emp"):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                nombre = st.text_input("Nombre completo *")
+                email = st.text_input("Email *", help="El usuario usará este email para iniciar sesión")
+            
+            with col2:
+                rol = st.selectbox(
+                    "Rol *",
+                    ["vendedor", "consulta", "repositor"],
+                    format_func=lambda x: {
+                        'vendedor': '💰 Vendedor - Registra ventas',
+                        'consulta': '📊 Consulta - Solo lectura',
+                        'repositor': '📦 Repositor - Gestiona stock'
+                    }[x]
+                )
+            
+            st.info("""
+            **Nota importante:** El usuario deberá registrarse primero en la app con este email.
+            Una vez registrado, cuando inicie sesión verá solo las secciones permitidas según su rol.
+            """)
+            
+            if st.form_submit_button("➕ Agregar Usuario", type="primary"):
+                if nombre and email:
+                    # Verificar que el email no exista ya
+                    usuarios_existentes = obtener_usuarios_emprendimiento()
+                    if not usuarios_existentes.empty and email in usuarios_existentes['email'].values:
+                        st.error("⚠️ Este email ya está agregado")
+                    else:
+                        agregar_usuario_emprendimiento(email, nombre, rol)
+                        st.success(f"✅ Usuario {nombre} agregado con rol {rol}")
+                        st.balloons()
+                        st.rerun()
+                else:
+                    st.error("⚠️ Completá todos los campos obligatorios")
+    
+    with tab3:
+        st.subheader("📖 Descripción de Roles")
+        
+        st.markdown("""
+        ### 🔑 ADMIN (Administrador)
+        **Acceso total al sistema**
+        - ✅ Ver y editar todo
+        - ✅ Gestionar usuarios
+        - ✅ Eliminar datos
+        - ✅ Configuración avanzada
+        - ✅ Importación masiva
+        
+        ---
+        
+        ### 💰 VENDEDOR
+        **Enfocado en ventas diarias**
+        - ✅ Ver stock (solo lectura)
+        - ✅ Registrar ventas
+        - ✅ Agregar/editar clientes
+        - ✅ Ver dashboard
+        - ❌ No ve costos
+        - ❌ No edita productos
+        - ❌ No elimina datos
+        
+        ---
+        
+        ### 📊 CONSULTA
+        **Solo lectura de reportes**
+        - ✅ Ver dashboard
+        - ✅ Ver reportes
+        - ✅ Ver stock
+        - ✅ Ver ventas
+        - ❌ No puede editar nada
+        - ❌ No ve costos
+        
+        ---
+        
+        ### 📦 REPOSITOR
+        **Gestión de inventario**
+        - ✅ Ver y editar stock
+        - ✅ Registrar compras
+        - ✅ Importación masiva
+        - ✅ Ajustar inventario
+        - ❌ No registra ventas
+        - ❌ No ve costos
+        """)
+
 def pagina_lista_precios():
     st.title("💰 Lista de Precios")
     
@@ -3390,15 +3604,57 @@ def main():
     
     # Si hay sesión, mostrar app principal
     usuario = obtener_usuario_actual()
+    rol = obtener_rol_usuario(usuario['email'])
     
     with st.sidebar:
         st.title("📦 Sistema de Reventa")
         st.write(f"👤 {usuario['nombre']}")
+        
+        # Mostrar rol si no es admin
+        if rol != 'admin':
+            rol_emoji = {
+                'vendedor': '💰',
+                'consulta': '📊',
+                'repositor': '📦'
+            }
+            st.caption(f"{rol_emoji.get(rol, '👤')} {rol.capitalize()}")
+        
         st.divider()
+        
+        # Menú adaptativo según rol
+        menu_items = []
+        
+        if tiene_permiso('ver_dashboard'):
+            menu_items.append("📊 Dashboard")
+        
+        if tiene_permiso('ver_stock'):
+            menu_items.append("📦 Stock")
+        
+        if tiene_permiso('ver_stock'):
+            menu_items.append("💰 Lista de Precios")
+        
+        if tiene_permiso('ver_ventas') or tiene_permiso('registrar_ventas'):
+            menu_items.append("💵 Ventas")
+        
+        if tiene_permiso('editar_stock'):
+            menu_items.append("🛒 Compras")
+        
+        if tiene_permiso('ver_clientes'):
+            menu_items.append("👥 Clientes")
+        
+        if tiene_permiso('ver_costos'):
+            menu_items.append("💸 Costos Fijos")
+        
+        if tiene_permiso('editar_stock'):
+            menu_items.append("🏪 Proveedores")
+            menu_items.append("🏷️ Categorías")
+        
+        if tiene_permiso('gestionar_usuarios'):
+            menu_items.append("⚙️ Usuarios")
         
         pagina = st.radio(
             "Navegación",
-            ["📊 Dashboard", "📦 Stock", "💰 Lista de Precios", "🛒 Compras", "💵 Ventas", "👥 Clientes", "💸 Costos Fijos", "🏪 Proveedores", "🏷️ Categorías"],
+            menu_items,
             label_visibility="collapsed"
         )
         
@@ -3407,7 +3663,7 @@ def main():
         if st.button("🚪 Cerrar Sesión"):
             cerrar_sesion()
         
-        st.caption("v2.0.0")
+        st.caption("v2.1.0")
     
     if pagina == "📊 Dashboard":
         pagina_dashboard()
@@ -3423,6 +3679,12 @@ def main():
         pagina_clientes()
     elif pagina == "💸 Costos Fijos":
         pagina_costos_fijos()
+    elif pagina == "🏪 Proveedores":
+        pagina_proveedores()
+    elif pagina == "🏷️ Categorías":
+        pagina_categorias()
+    elif pagina == "⚙️ Usuarios":
+        pagina_usuarios()
     elif pagina == "🏪 Proveedores":
         pagina_proveedores()
     elif pagina == "🏷️ Categorías":
