@@ -3498,25 +3498,30 @@ def pagina_lista_precios():
     lista['precio_efectivo'] = lista['precio_final'].apply(lambda x: redondear_precio(x * 0.90))
     lista['precio_final'] = lista['precio_final'].apply(redondear_precio)
     
-    # Redondear
-    lista['precio_con_descuento'] = lista['precio_con_descuento'].round(2)
-    lista['precio_con_recargo'] = lista['precio_con_recargo'].round(2)
-    
-    # Ocultar producto_id de la vista
+    # Vista de la tabla con todas las columnas
     lista_display = lista[['codigo', 'nombre', 'precio_costo', 'margen_teorico', 'precio_sugerido', 
-                           'precio_final', 'margen_real', 'precio_con_descuento', 'precio_con_recargo']].copy()
+                           'precio_final', 'precio_efectivo', 'precio_con_descuento', 'precio_descuento2',
+                           'precio_con_recargo', 'precio_recargo2']].copy()
+    
+    # Asegurar tipos float para evitar problemas con Arrow
+    for col in ['precio_costo', 'margen_teorico', 'precio_sugerido', 'precio_final', 
+                'precio_efectivo', 'precio_con_descuento', 'precio_descuento2',
+                'precio_con_recargo', 'precio_recargo2']:
+        lista_display[col] = pd.to_numeric(lista_display[col], errors='coerce').fillna(0).astype(float)
     
     # Configurar columnas editables
     columnas_config = {
-        'codigo': st.column_config.TextColumn("Código", disabled=True, width="small"),
-        'nombre': st.column_config.TextColumn("Producto", disabled=True, width="medium"),
-        'precio_costo': st.column_config.NumberColumn("Precio Costo", disabled=True, format="$%.2f", width="small"),
-        'margen_teorico': st.column_config.NumberColumn("Margen %", min_value=0, max_value=500, step=1, format="%.1f", width="small"),
-        'precio_sugerido': st.column_config.NumberColumn("Sugerido", disabled=True, format="$%.2f", width="small"),
-        'precio_final': st.column_config.NumberColumn("Final", min_value=0, step=0.01, format="$%.2f", width="small"),
-        'margen_real': st.column_config.NumberColumn("Real %", disabled=True, format="%.2f", width="small"),
-        'precio_con_descuento': st.column_config.NumberColumn(f"c/ Desc. {descuento_global:.0f}%", disabled=True, format="$%.2f", width="small"),
-        'precio_con_recargo': st.column_config.NumberColumn(f"c/ Rec. {recargo_global:.0f}%", disabled=True, format="$%.2f", width="small")
+        'codigo':             st.column_config.TextColumn("Código", disabled=True, width="small"),
+        'nombre':             st.column_config.TextColumn("Producto", disabled=True, width="medium"),
+        'precio_costo':       st.column_config.NumberColumn("Costo", disabled=True, format="$%.0f", width="small"),
+        'margen_teorico':     st.column_config.NumberColumn("Margen %", min_value=0, max_value=500, step=1, format="%.1f", width="small"),
+        'precio_sugerido':    st.column_config.NumberColumn("Sugerido", disabled=True, format="$%.0f", width="small"),
+        'precio_final':       st.column_config.NumberColumn("📋 Lista", min_value=0, step=50, format="$%.0f", width="small"),
+        'precio_efectivo':    st.column_config.NumberColumn("💵 Efectivo", disabled=True, format="$%.0f", width="small"),
+        'precio_con_descuento': st.column_config.NumberColumn(f"🔽 Desc {descuento1:.0f}%", disabled=True, format="$%.0f", width="small"),
+        'precio_descuento2':  st.column_config.NumberColumn(f"🔽 Desc {descuento2:.0f}%", disabled=True, format="$%.0f", width="small"),
+        'precio_con_recargo': st.column_config.NumberColumn(f"🔼 Rec {recargo1:.0f}%", disabled=True, format="$%.0f", width="small"),
+        'precio_recargo2':    st.column_config.NumberColumn(f"🔼 Rec {recargo2:.0f}%", disabled=True, format="$%.0f", width="small"),
     }
     
     # Mostrar tabla editable
@@ -3531,10 +3536,18 @@ def pagina_lista_precios():
     )
     
     # Recalcular automáticamente precio sugerido y margen real
+    # Convertir columnas a float nativo para evitar problemas con Arrow
+    edited_df = edited_df.copy()
+    for col in ['precio_costo', 'margen_teorico', 'precio_final', 'precio_sugerido', 
+                'margen_real', 'precio_con_descuento', 'precio_descuento2',
+                'precio_con_recargo', 'precio_recargo2', 'precio_efectivo']:
+        if col in edited_df.columns:
+            edited_df[col] = pd.to_numeric(edited_df[col], errors='coerce').fillna(0).astype(float)
+    
     for idx in range(len(edited_df)):
-        precio_costo = edited_df.iloc[idx]['precio_costo']
-        margen_teorico = edited_df.iloc[idx]['margen_teorico']
-        precio_final = edited_df.iloc[idx]['precio_final']
+        precio_costo = float(edited_df.iloc[idx]['precio_costo'])
+        margen_teorico = float(edited_df.iloc[idx]['margen_teorico'])
+        precio_final = float(edited_df.iloc[idx]['precio_final'])
         
         # Recalcular precio sugerido
         edited_df.at[idx, 'precio_sugerido'] = round(precio_costo * (1 + margen_teorico / 100), 2)
@@ -3544,8 +3557,11 @@ def pagina_lista_precios():
             edited_df.at[idx, 'margen_real'] = round(((precio_final - precio_costo) / precio_costo) * 100, 2)
         
         # Recalcular descuento y recargo
-        edited_df.at[idx, 'precio_con_descuento'] = round(precio_final * (1 - descuento_global / 100), 2)
-        edited_df.at[idx, 'precio_con_recargo'] = round(precio_final * (1 + recargo_global / 100), 2)
+        edited_df.at[idx, 'precio_con_descuento'] = redondear_precio(precio_final * (1 - descuento1 / 100))
+        edited_df.at[idx, 'precio_descuento2'] = redondear_precio(precio_final * (1 - descuento2 / 100))
+        edited_df.at[idx, 'precio_con_recargo'] = redondear_precio(precio_final * (1 + recargo1 / 100))
+        edited_df.at[idx, 'precio_recargo2'] = redondear_precio(precio_final * (1 + recargo2 / 100))
+        edited_df.at[idx, 'precio_efectivo'] = redondear_precio(precio_final * 0.90)
     
     # Botón para guardar cambios
     col1, col2 = st.columns([1, 4])
