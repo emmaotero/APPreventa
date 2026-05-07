@@ -3591,13 +3591,13 @@ def pagina_lista_precios():
     st.divider()
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        margen_promedio = edited_df['margen_real'].mean()
+        margen_promedio = edited_df['margen_teorico'].mean()
         st.metric("Margen Promedio", f"{margen_promedio:.1f}%")
     with col2:
-        precio_max = edited_df['precio_final'].max()
+        precio_max = edited_df['precio_lista'].max()
         st.metric("Precio Más Alto", formato_moneda(precio_max))
     with col3:
-        precio_min = edited_df['precio_final'].min()
+        precio_min = edited_df['precio_lista'].min()
         st.metric("Precio Más Bajo", formato_moneda(precio_min))
     with col4:
         promedio_descuento = edited_df['precio_con_descuento'].mean()
