@@ -940,9 +940,25 @@ def buscar_cliente_por_dni(dni):
     usuario = obtener_usuario_actual()
     if not usuario:
         return None
-    
     response = supabase.table("clientes").select("*").eq("dni", dni).eq("usuario_id", usuario['id']).execute()
     return response.data[0] if response.data else None
+
+def buscar_clientes_por_telefono(ultimos_digitos):
+    """Busca clientes cuyos últimos N dígitos del celular coinciden"""
+    usuario = obtener_usuario_actual()
+    if not usuario:
+        return []
+    response = supabase.table("clientes").select("*").eq("usuario_id", usuario['id']).execute()
+    if not response.data:
+        return []
+    # Filtrar por últimos dígitos del teléfono
+    resultado = []
+    for c in response.data:
+        tel = str(c.get('telefono', '') or '')
+        tel_limpio = ''.join(filter(str.isdigit, tel))
+        if tel_limpio.endswith(ultimos_digitos):
+            resultado.append(c)
+    return resultado
 
 def buscar_clientes(termino):
     """Busca clientes por DNI, nombre o teléfono"""
@@ -2742,9 +2758,29 @@ def pagina_compras():
         else:
             st.info("No hay compras en el período seleccionado")
 
+def redondear_precio(precio):
+    """Redondea al 0, 50 o 100 más cercano"""
+    base = round(precio / 50) * 50
+    return int(base)
+
+def calcular_precios_venta(precio_costo, precio_lista):
+    """Calcula los 6 precios de venta con redondeo usando config global"""
+    d1 = st.session_state.get('desc1', 10.0)
+    d2 = st.session_state.get('desc2', 20.0)
+    r1 = st.session_state.get('rec1', 15.0)
+    r2 = st.session_state.get('rec2', 30.0)
+    return {
+        'lista':      redondear_precio(precio_lista),
+        'efectivo':   redondear_precio(precio_lista * 0.90),
+        'descuento1': redondear_precio(precio_lista * (1 - d1 / 100)),
+        'descuento2': redondear_precio(precio_lista * (1 - d2 / 100)),
+        'recargo1':   redondear_precio(precio_lista * (1 + r1 / 100)),
+        'recargo2':   redondear_precio(precio_lista * (1 + r2 / 100)),
+    }
+
 def pagina_ventas():
-    st.title("💰 Gestión de Ventas")
-    tab1, tab2 = st.tabs(["➕ Registrar", "📋 Historial"])
+    st.title("💵 Registrar Venta")
+    tab1, tab2 = st.tabs(["➕ Nueva Venta", "📋 Historial"])
     
     with tab1:
         productos = obtener_productos(excluir_pausados=True)
@@ -2752,179 +2788,200 @@ def pagina_ventas():
             st.warning("No hay productos disponibles para vender")
             return
         
-        # Inicializar session state para cliente
+        lista_precios = obtener_lista_precios()
+        
+        # ── SESSION STATE ──────────────────────────────
         if 'cliente_venta' not in st.session_state:
             st.session_state.cliente_venta = None
+        if 'carrito' not in st.session_state:
+            st.session_state.carrito = []  # Lista de items {producto_id, nombre, cantidad, precio, subtotal}
         
-        # Búsqueda de cliente
-        st.subheader("1️⃣ Cliente")
-        col_dni, col_buscar, col_limpiar = st.columns([3, 1, 1])
+        # ══════════════════════════════════════════════
+        # PASO 1: CLIENTE
+        # ══════════════════════════════════════════════
+        st.subheader("1️⃣ Cliente (opcional)")
+        col_tel, col_buscar, col_limpiar = st.columns([3, 1, 1])
         
-        with col_dni:
-            dni_cliente = st.text_input("DNI del Cliente (opcional)", max_chars=20, help="Dejá vacío para venta sin cliente", key="dni_input")
+        with col_tel:
+            ultimos4 = st.text_input(
+                "Últimos 4 dígitos del celular",
+                max_chars=4,
+                help="Ingresá los últimos 4 números del celular del cliente",
+                key="buscar_tel_input"
+            )
         
         with col_buscar:
-            st.write("")  # Espaciado
+            st.write("")
             if st.button("🔍 Buscar", use_container_width=True):
-                if dni_cliente:
-                    cliente = buscar_cliente_por_dni(dni_cliente)
-                    if cliente:
-                        st.session_state.cliente_venta = cliente
-                    else:
-                        st.session_state.cliente_venta = None
+                if ultimos4 and len(ultimos4) >= 3:
+                    # Buscar clientes cuyo teléfono termina en esos dígitos
+                    clientes_encontrados = buscar_clientes_por_telefono(ultimos4)
+                    st.session_state.clientes_encontrados = clientes_encontrados
+                else:
+                    st.warning("Ingresá al menos 3 dígitos")
         
         with col_limpiar:
-            st.write("")  # Espaciado
+            st.write("")
             if st.button("🗑️ Limpiar", use_container_width=True):
                 st.session_state.cliente_venta = None
+                st.session_state.clientes_encontrados = []
                 st.rerun()
+        
+        # Mostrar resultados de búsqueda
+        if 'clientes_encontrados' not in st.session_state:
+            st.session_state.clientes_encontrados = []
+        
+        if st.session_state.clientes_encontrados and not st.session_state.cliente_venta:
+            clientes = st.session_state.clientes_encontrados
+            if len(clientes) == 1:
+                # Solo uno, seleccionar automáticamente
+                st.session_state.cliente_venta = clientes[0]
+                st.session_state.clientes_encontrados = []
+                st.rerun()
+            else:
+                # Varios, mostrar opciones
+                st.info(f"Se encontraron {len(clientes)} clientes:")
+                for c in clientes:
+                    if st.button(f"👤 {c['nombre']} — {c.get('telefono', 'Sin tel')}", key=f"sel_cliente_{c['id']}"):
+                        st.session_state.cliente_venta = c
+                        st.session_state.clientes_encontrados = []
+                        st.rerun()
         
         # Mostrar cliente seleccionado
         if st.session_state.cliente_venta:
-            st.success(f"✅ **{st.session_state.cliente_venta['nombre']}** - DNI: {st.session_state.cliente_venta['dni']} - Tel: {st.session_state.cliente_venta.get('telefono', 'N/A')}")
-            mostrar_form_nuevo_cliente = False
-        elif dni_cliente:
-            st.warning(f"⚠️ Cliente con DNI {dni_cliente} no encontrado")
-            mostrar_form_nuevo_cliente = st.checkbox("➕ Registrar cliente nuevo")
+            c = st.session_state.cliente_venta
+            st.success(f"✅ **{c['nombre']}** — Tel: {c.get('telefono', 'N/A')}")
         else:
-            mostrar_form_nuevo_cliente = False
-        
-        # Formulario de nuevo cliente (si es necesario)
-        if mostrar_form_nuevo_cliente and dni_cliente:
-            with st.expander("📝 Datos del nuevo cliente", expanded=True):
-                col1, col2 = st.columns(2)
-                with col1:
-                    nuevo_nombre = st.text_input("Nombre Completo *", key="venta_nuevo_nombre")
-                    nuevo_telefono = st.text_input("Teléfono", key="venta_nuevo_tel")
-                with col2:
-                    nuevo_email = st.text_input("Email", key="venta_nuevo_email")
-                    nuevas_notas = st.text_input("Notas", key="venta_nuevo_notas")
-                
-                if st.button("💾 Guardar Cliente"):
-                    if nuevo_nombre:
-                        resultado = crear_cliente({
-                            'dni': dni_cliente,
-                            'nombre': nuevo_nombre,
-                            'telefono': nuevo_telefono if nuevo_telefono else None,
-                            'email': nuevo_email if nuevo_email else None,
-                            'notas': nuevas_notas if nuevas_notas else None
-                        })
-                        if resultado:
-                            st.success(f"✅ Cliente {nuevo_nombre} registrado")
-                            st.session_state.cliente_venta = resultado[0]
-                            st.rerun()
-                    else:
-                        st.error("El nombre es obligatorio")
+            st.caption("Sin cliente seleccionado — la venta se registrará como venta general")
         
         st.divider()
         
-        # Formulario de venta
-        st.subheader("2️⃣ Datos de la Venta")
+        # ══════════════════════════════════════════════
+        # PASO 2: AGREGAR PRODUCTOS AL CARRITO
+        # ══════════════════════════════════════════════
+        st.subheader("2️⃣ Productos")
         
-        # Selector de producto FUERA del form para poder reaccionar
+        # Selector de producto
         producto_id = st.selectbox(
-            "Producto *",
+            "Seleccioná un producto",
             productos['id'].tolist(),
-            format_func=lambda x: f"{productos[productos['id']==x]['codigo'].values[0]} - {productos[productos['id']==x]['nombre'].values[0]} (Stock: {productos[productos['id']==x]['stock_actual'].values[0]})",
+            format_func=lambda x: f"{productos[productos['id']==x]['codigo'].values[0]} — {productos[productos['id']==x]['nombre'].values[0]} (Stock: {int(productos[productos['id']==x]['stock_actual'].values[0])})",
             key="selector_producto_venta"
         )
         
-        # Obtener precios del producto seleccionado
-        precio_sugerido = None
-        precio_definido = None
-        precio_con_descuento = None
-        precio_con_recargo = None
+        # Calcular precios para el producto seleccionado
+        precios = None
+        if producto_id and not lista_precios.empty:
+            prod_precio = lista_precios[lista_precios['producto_id'] == producto_id]
+            if not prod_precio.empty:
+                precio_lista = float(prod_precio.iloc[0]['precio_final'])
+                precio_costo = float(prod_precio.iloc[0]['precio_costo']) if 'precio_costo' in prod_precio.columns else 0
+                precios = calcular_precios_venta(precio_costo, precio_lista)
         
-        lista_precios = obtener_lista_precios()
-        if not lista_precios.empty and producto_id:
-            producto_precio = lista_precios[lista_precios['producto_id'] == producto_id]
-            if not producto_precio.empty:
-                # Precio sugerido (calculado con el margen teórico)
-                precio_sugerido = float(producto_precio.iloc[0]['precio_sugerido'])
-                # Precio definido (el que estableciste en la lista)
-                precio_definido = float(producto_precio.iloc[0]['precio_final'])
-                
-                # Calcular precios con descuento y recargo (usando valores por defecto)
-                descuento_default = 10.0  # 10%
-                recargo_default = 15.0    # 15%
-                
-                precio_con_descuento = precio_definido * (1 - descuento_default / 100)
-                precio_con_recargo = precio_definido * (1 + recargo_default / 100)
+        if precios:
+            st.markdown("**💰 Seleccioná el precio:**")
+            
+            d1 = st.session_state.get('desc1', 10.0)
+            d2 = st.session_state.get('desc2', 20.0)
+            r1 = st.session_state.get('rec1', 15.0)
+            r2 = st.session_state.get('rec2', 30.0)
+            
+            opciones_precio = {
+                f"📋 Lista — {formato_moneda(precios['lista'])}": precios['lista'],
+                f"💵 Efectivo — {formato_moneda(precios['efectivo'])}": precios['efectivo'],
+                f"🔽 Desc {d1:.0f}% — {formato_moneda(precios['descuento1'])}": precios['descuento1'],
+                f"🔽 Desc {d2:.0f}% — {formato_moneda(precios['descuento2'])}": precios['descuento2'],
+                f"🔼 Rec {r1:.0f}% — {formato_moneda(precios['recargo1'])}": precios['recargo1'],
+                f"🔼 Rec {r2:.0f}% — {formato_moneda(precios['recargo2'])}": precios['recargo2'],
+            }
+            
+            precio_elegido_label = st.radio(
+                "Tipo de precio",
+                list(opciones_precio.keys()),
+                horizontal=True,
+                label_visibility="collapsed"
+            )
+            precio_elegido = opciones_precio[precio_elegido_label]
+        else:
+            st.warning("⚠️ Este producto no tiene precio definido en Lista de Precios")
+            precio_elegido = 0
         
-        # Mostrar precios de referencia en cards
-        if precio_definido:
-            st.markdown("### 💰 Precios de Referencia")
-            col_p1, col_p2, col_p3, col_p4 = st.columns(4)
-            
-            with col_p1:
-                st.info(f"""
-                **💡 Precio Sugerido**  
-                {formato_moneda(precio_sugerido)}
-                """)
-            
-            with col_p2:
-                st.success(f"""
-                **💵 Precio Definido**  
-                {formato_moneda(precio_definido)}
-                """)
-            
-            with col_p3:
-                st.success(f"""
-                **🔽 Con Descuento 10%**  
-                {formato_moneda(precio_con_descuento)}
-                """)
-            
-            with col_p4:
-                st.warning(f"""
-                **🔼 Con Recargo 15%**  
-                {formato_moneda(precio_con_recargo)}
-                """)
-            
-            st.caption("💡 Estos son precios de referencia. Podés cargar el precio que quieras abajo.")
-        
-        with st.form("nueva_venta"):
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                cantidad = st.number_input("Cantidad *", min_value=1, step=1)
-            with col2:
-                precio_unitario = st.number_input(
-                    "Precio Venta *", 
-                    min_value=0.0,
-                    value=0.0,
-                    step=0.01,
-                    help="Ingresá el precio al que vas a vender"
-                )
-            with col3:
-                fecha_venta = st.date_input("Fecha", value=datetime.now().date())
-            
-            # Mostrar total solo si precio > 0
-            if precio_unitario > 0:
-                total_venta = cantidad * precio_unitario
-                st.info(f"💵 **Total de la venta:** {formato_moneda(total_venta)}")
-            
-            if st.form_submit_button("✅ Registrar Venta", type="primary"):
-                if precio_unitario <= 0:
-                    st.error("❌ El precio de venta debe ser mayor a 0")
+        col_cant, col_agregar = st.columns([2, 1])
+        with col_cant:
+            cantidad_agregar = st.number_input("Cantidad", min_value=1, step=1, value=1, key="cant_agregar")
+        with col_agregar:
+            st.write("")
+            if st.button("➕ Agregar al carrito", use_container_width=True, type="primary"):
+                if precio_elegido > 0:
+                    prod_row = productos[productos['id'] == producto_id].iloc[0]
+                    st.session_state.carrito.append({
+                        'producto_id': producto_id,
+                        'nombre': prod_row['nombre'],
+                        'codigo': prod_row['codigo'],
+                        'cantidad': cantidad_agregar,
+                        'precio': precio_elegido,
+                        'subtotal': cantidad_agregar * precio_elegido
+                    })
+                    st.rerun()
                 else:
+                    st.error("⚠️ El producto no tiene precio definido")
+        
+        st.divider()
+        
+        # ══════════════════════════════════════════════
+        # PASO 3: CARRITO
+        # ══════════════════════════════════════════════
+        st.subheader("3️⃣ Carrito")
+        
+        if not st.session_state.carrito:
+            st.info("El carrito está vacío. Agregá productos arriba.")
+        else:
+            total_venta = 0
+            for i, item in enumerate(st.session_state.carrito):
+                col_item, col_del = st.columns([5, 1])
+                with col_item:
+                    st.write(f"**{item['codigo']} — {item['nombre']}**")
+                    st.caption(f"{item['cantidad']} × {formato_moneda(item['precio'])} = {formato_moneda(item['subtotal'])}")
+                with col_del:
+                    if st.button("🗑️", key=f"del_item_{i}"):
+                        st.session_state.carrito.pop(i)
+                        st.rerun()
+                total_venta += item['subtotal']
+            
+            st.divider()
+            st.markdown(f"### 💰 Total: {formato_moneda(total_venta)}")
+            
+            fecha_venta = st.date_input("Fecha de venta", value=datetime.now().date())
+            notas_venta = st.text_input("Notas (opcional)", placeholder="Ej: Pago con tarjeta, entrega a domicilio...")
+            
+            col_registrar, col_vaciar = st.columns([3, 1])
+            with col_registrar:
+                if st.button("✅ Confirmar Venta", type="primary", use_container_width=True):
                     try:
-                        # Usar cliente de session_state
-                        cliente_id_venta = None
-                        if st.session_state.cliente_venta:
-                            cliente_id_venta = st.session_state.cliente_venta['id']
+                        cliente_id_venta = st.session_state.cliente_venta['id'] if st.session_state.cliente_venta else None
                         
-                        registrar_venta({
-                            'producto_id': producto_id,
-                            'cantidad': cantidad,
-                            'precio_unitario': precio_unitario,
-                            'fecha': str(fecha_venta),
-                            'cliente_id': cliente_id_venta
-                        })
-                        st.success("✅ Venta registrada")
-                        # Limpiar cliente después de registrar
+                        for item in st.session_state.carrito:
+                            registrar_venta({
+                                'producto_id': item['producto_id'],
+                                'cantidad': item['cantidad'],
+                                'precio_unitario': item['precio'],
+                                'fecha': str(fecha_venta),
+                                'cliente_id': cliente_id_venta,
+                                'notas': notas_venta if notas_venta else None
+                            })
+                        
+                        st.success(f"✅ Venta registrada — {len(st.session_state.carrito)} productos — Total: {formato_moneda(total_venta)}")
+                        st.session_state.carrito = []
                         st.session_state.cliente_venta = None
+                        st.session_state.clientes_encontrados = []
                         st.rerun()
                     except Exception as e:
                         st.error(f"Error: {str(e)}")
+            
+            with col_vaciar:
+                if st.button("🗑️ Vaciar", use_container_width=True):
+                    st.session_state.carrito = []
+                    st.rerun()
     
     with tab2:
         col1, col2 = st.columns([3, 1])
@@ -3408,13 +3465,24 @@ def pagina_lista_precios():
     """)
     
     # Controles para descuento y recargo globales
-    col1, col2, col3 = st.columns([2, 1, 1])
+    st.write("**⚙️ Configuración de Precios Especiales:**")
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.write("**Cálculo de Precios Especiales:**")
+        descuento1 = st.number_input("Descuento 1 %", min_value=0.0, max_value=100.0, value=st.session_state.get('desc1', 10.0), step=1.0)
+        st.session_state['desc1'] = descuento1
     with col2:
-        descuento_global = st.number_input("Descuento % (global)", min_value=0.0, max_value=100.0, value=10.0, step=1.0, help="Se aplica sobre Precio Final")
+        descuento2 = st.number_input("Descuento 2 %", min_value=0.0, max_value=100.0, value=st.session_state.get('desc2', 20.0), step=1.0)
+        st.session_state['desc2'] = descuento2
     with col3:
-        recargo_global = st.number_input("Recargo % (global)", min_value=0.0, max_value=500.0, value=15.0, step=1.0, help="Se aplica sobre Precio Final")
+        recargo1 = st.number_input("Recargo 1 %", min_value=0.0, max_value=500.0, value=st.session_state.get('rec1', 15.0), step=1.0)
+        st.session_state['rec1'] = recargo1
+    with col4:
+        recargo2 = st.number_input("Recargo 2 %", min_value=0.0, max_value=500.0, value=st.session_state.get('rec2', 30.0), step=1.0)
+        st.session_state['rec2'] = recargo2
+    
+    # Guardar globalmente para ventas
+    descuento_global = descuento1
+    recargo_global = recargo1
     
     lista = obtener_lista_precios()
     
@@ -3422,9 +3490,13 @@ def pagina_lista_precios():
         st.warning("No hay productos en stock. Primero cargá productos.")
         return
     
-    # Calcular precios con descuento y recargo
-    lista['precio_con_descuento'] = lista['precio_final'] * (1 - descuento_global / 100)
-    lista['precio_con_recargo'] = lista['precio_final'] * (1 + recargo_global / 100)
+    # Calcular todos los precios con redondeo
+    lista['precio_con_descuento'] = lista['precio_final'].apply(lambda x: redondear_precio(x * (1 - descuento1 / 100)))
+    lista['precio_descuento2'] = lista['precio_final'].apply(lambda x: redondear_precio(x * (1 - descuento2 / 100)))
+    lista['precio_con_recargo'] = lista['precio_final'].apply(lambda x: redondear_precio(x * (1 + recargo1 / 100)))
+    lista['precio_recargo2'] = lista['precio_final'].apply(lambda x: redondear_precio(x * (1 + recargo2 / 100)))
+    lista['precio_efectivo'] = lista['precio_final'].apply(lambda x: redondear_precio(x * 0.90))
+    lista['precio_final'] = lista['precio_final'].apply(redondear_precio)
     
     # Redondear
     lista['precio_con_descuento'] = lista['precio_con_descuento'].round(2)
