@@ -254,11 +254,22 @@ def to_excel(df, sheet_name="Datos"):
         
         for col_num, value in enumerate(df.columns.values):
             worksheet.write(0, col_num, value, header_format)
-            col_data = df[value].astype(str)
+            
+            # Convertir a string y manejar None/NaN
+            col_data = df[value].fillna('').astype(str)
+            
             if len(col_data) > 0:
-                max_len = max(col_data.apply(len).max(), len(str(value))) + 2
+                try:
+                    # Calcular ancho máximo de columna
+                    max_len = col_data.str.len().max()
+                    max_len = max(max_len, len(str(value))) + 2
+                except:
+                    max_len = len(str(value)) + 2
             else:
                 max_len = len(str(value)) + 2
+            
+            # Limitar ancho máximo a 50 caracteres
+            max_len = min(max_len, 50)
             worksheet.set_column(col_num, col_num, max_len)
     
     return output.getvalue()
