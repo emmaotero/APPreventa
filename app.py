@@ -287,22 +287,135 @@ def obtener_productos(activos_solo=True, excluir_pausados=False):
     usuario = obtener_usuario_actual()
     if not usuario:
         return pd.DataFrame()
+    
+    # Cache key única por usuario y parámetros
+    cache_key = f"cache_productos_{usuario['id']}_{activos_solo}_{excluir_pausados}"
+    if cache_key in st.session_state:
+        return st.session_state[cache_key]
+    
     query = supabase.table("productos").select("*, categorias(nombre), proveedores(nombre)").eq("usuario_id", usuario['id'])
     if activos_solo:
         query = query.eq("activo", True)
     if excluir_pausados:
         query = query.eq("pausado", False)
     response = query.execute()
-    return pd.DataFrame(response.data) if response.data else pd.DataFrame()
+    result = pd.DataFrame(response.data) if response.data else pd.DataFrame()
+    st.session_state[cache_key] = result
+    return result
+
+def limpiar_cache_productos():
+    """Limpia el cache de productos para forzar recarga"""
+    keys_to_delete = [k for k in st.session_state.keys() if k.startswith('cache_productos_')]
+    for k in keys_to_delete:
+        del st.session_state[k]
+
+def obtener_lista_precios():
+    usuario = obtener_usuario_actual()
+    if not usuario:
+        return pd.DataFrame()
+    
+    cache_key = f"cache_lista_precios_{usuario['id']}"
+    if cache_key in st.session_state:
+        return st.session_state[cache_key]
+    
+    productos = obtener_productos()
+    if productos.empty:
+        return pd.DataFrame()
+    
+    precios_data = supabase.table("precios").select("*").eq("usuario_id", usuario['id']).execute()
+    precios_dict = {p['producto_id']: p for p in precios_data.data} if precios_data.data else {}
+    
+    lista = []
+    for _, prod in productos.iterrows():
+        precio_data = precios_dict.get(prod['id'], {})
+        precio_costo = float(prod['precio_compra']) if prod['precio_compra'] else 0
+        margen_teorico = float(precio_data.get('margen_teorico', 30)) if precio_data else 30
+        
+        if precio_data and precio_data.get('precio_final'):
+            precio_final = float(precio_data['precio_final'])
+        else:
+            precio_final = None
+        
+        precio_sugerido = round(precio_costo * (1 + margen_teorico / 100), 2)
+        
+        if precio_final:
+            margen_real = round(((precio_final - precio_costo) / precio_costo) * 100, 2) if precio_costo > 0 else 0
+        else:
+            margen_real = margen_teorico
+            precio_final = precio_sugerido
+        
+        lista.append({
+            'producto_id': prod['id'],
+            'codigo': prod['codigo'],
+            'nombre': prod['nombre'],
+            'precio_costo': precio_costo,
+            'margen_teorico': margen_teorico,
+            'precio_sugerido': precio_sugerido,
+            'precio_final': precio_final,
+            'margen_real': margen_real
+        })
+    
+    result = pd.DataFrame(lista)
+    st.session_state[cache_key] = result
+    return result
+
+def limpiar_cache_precios():
+    keys_to_delete = [k for k in st.session_state.keys() if k.startswith('cache_lista_precios_')]
+    for k in keys_to_delete:
+        del st.session_state[k]
+
+def obtener_categorias():
+    usuario = obtener_usuario_actual()
+    if not usuario:
+        return pd.DataFrame()
+    
+    cache_key = f"cache_categorias_{usuario['id']}"
+    if cache_key in st.session_state:
+        return st.session_state[cache_key]
+    
+    response = supabase.table("categorias").select("*").eq("usuario_id", usuario['id']).order("nombre").execute()
+    result = pd.DataFrame(response.data) if response.data else pd.DataFrame()
+    st.session_state[cache_key] = result
+    return result
+
+def limpiar_cache_categorias():
+    keys_to_delete = [k for k in st.session_state.keys() if k.startswith('cache_categorias_')]
+    for k in keys_to_delete:
+        del st.session_state[k]
+
+def obtener_proveedores():
+    usuario = obtener_usuario_actual()
+    if not usuario:
+        return pd.DataFrame()
+    
+    cache_key = f"cache_proveedores_{usuario['id']}"
+    if cache_key in st.session_state:
+        return st.session_state[cache_key]
+    
+    response = supabase.table("proveedores").select("*").eq("usuario_id", usuario['id']).order("nombre").execute()
+    result = pd.DataFrame(response.data) if response.data else pd.DataFrame()
+    st.session_state[cache_key] = result
+    return result
+
+def limpiar_cache_proveedores():
+    keys_to_delete = [k for k in st.session_state.keys() if k.startswith('cache_proveedores_')]
+    for k in keys_to_delete:
+        del st.session_state[k]
 
 def crear_producto(datos):
     usuario = obtener_usuario_actual()
     if usuario:
         datos['usuario_id'] = usuario['id']
-    return supabase.table("productos").insert(datos).execute().data
+    result = supabase.table("productos").insert(datos).execute().data
+    limpiar_cache_productos()
+    limpiar_cache_precios()
+    return result
 
 def actualizar_producto(id_producto, datos):
-    return supabase.table("productos").update(datos).eq("id", id_producto).execute().data
+    result = supabase.table("productos").update(datos).eq("id", id_producto).execute().data
+    limpiar_cache_productos()
+    limpiar_cache_precios()
+    return result
 
 def eliminar_producto(id_producto, borrado_permanente=False):
     """
@@ -698,13 +811,6 @@ def obtener_ventas(fecha_desde=None, fecha_hasta=None):
     return pd.DataFrame(response.data) if response.data else pd.DataFrame()
 
 # --- CATEGORÍAS ---
-def obtener_categorias():
-    usuario = obtener_usuario_actual()
-    if not usuario:
-        return pd.DataFrame()
-    response = supabase.table("categorias").select("*").eq("usuario_id", usuario['id']).execute()
-    return pd.DataFrame(response.data) if response.data else pd.DataFrame()
-
 def crear_categoria(nombre, descripcion=""):
     usuario = obtener_usuario_actual()
     if not usuario:
@@ -724,10 +830,14 @@ def crear_categoria(nombre, descripcion=""):
     }).execute().data
 
 def actualizar_categoria(id_categoria, datos):
-    return supabase.table("categorias").update(datos).eq("id", id_categoria).execute().data
+    result = supabase.table("categorias").update(datos).eq("id", id_categoria).execute().data
+    limpiar_cache_categorias()
+    return result
 
 def eliminar_categoria(id_categoria):
-    return supabase.table("categorias").delete().eq("id", id_categoria).execute().data
+    result = supabase.table("categorias").delete().eq("id", id_categoria).execute().data
+    limpiar_cache_categorias()
+    return result
 
 def generar_codigo_categoria(nombre_categoria, categorias_existentes):
     """Genera código de categoría único tomando letras significativas"""
@@ -819,13 +929,6 @@ def generar_codigo_producto(nombre_producto, codigo_categoria, codigos_ya_usados
             return f"{codigo_categoria}-{hash(nombre_producto) % 10000:04d}"
 
 # --- PROVEEDORES ---
-def obtener_proveedores():
-    usuario = obtener_usuario_actual()
-    if not usuario:
-        return pd.DataFrame()
-    response = supabase.table("proveedores").select("*").eq("usuario_id", usuario['id']).execute()
-    return pd.DataFrame(response.data) if response.data else pd.DataFrame()
-
 def crear_proveedor(datos):
     usuario = obtener_usuario_actual()
     if usuario:
@@ -859,65 +962,12 @@ def eliminar_costo_fijo(id_costo):
     return supabase.table("costos_fijos").update({"activo": False}).eq("id", id_costo).execute().data
 
 # --- LISTA DE PRECIOS ---
-def obtener_lista_precios():
-    """Obtiene lista de precios con datos calculados"""
-    usuario = obtener_usuario_actual()
-    if not usuario:
-        return pd.DataFrame()
-    
-    # Obtener productos activos
-    productos = obtener_productos(activos_solo=True)
-    if productos.empty:
-        return pd.DataFrame()
-    
-    # Obtener lista de precios existente
-    response = supabase.table("lista_precios").select("*").eq("usuario_id", usuario['id']).execute()
-    lista_precios = pd.DataFrame(response.data) if response.data else pd.DataFrame()
-    
-    # Crear DataFrame con todos los productos
-    resultado = []
-    for _, prod in productos.iterrows():
-        precio_costo = float(prod['precio_compra'])
-        
-        # Buscar si tiene precio en lista
-        if not lista_precios.empty and prod['id'] in lista_precios['producto_id'].values:
-            precio_data = lista_precios[lista_precios['producto_id'] == prod['id']].iloc[0]
-            margen_teorico = float(precio_data['margen_teorico'])
-            precio_final = float(precio_data['precio_final']) if precio_data['precio_final'] else None
-        else:
-            margen_teorico = 30.0  # Default
-            precio_final = None
-        
-        # Calcular precio sugerido
-        precio_sugerido = round(precio_costo * (1 + margen_teorico / 100), 2)
-        
-        # Calcular margen real si hay precio final
-        if precio_final:
-            margen_real = round(((precio_final - precio_costo) / precio_costo) * 100, 2) if precio_costo > 0 else 0
-        else:
-            margen_real = margen_teorico
-            precio_final = precio_sugerido
-        
-        resultado.append({
-            'producto_id': prod['id'],
-            'codigo': prod['codigo'],
-            'nombre': prod['nombre'],
-            'precio_costo': precio_costo,
-            'margen_teorico': margen_teorico,
-            'precio_sugerido': precio_sugerido,
-            'precio_final': precio_final,
-            'margen_real': margen_real
-        })
-    
-    return pd.DataFrame(resultado)
-
 def guardar_precio(producto_id, margen_teorico, precio_final):
     """Guarda o actualiza el precio de un producto"""
     usuario = obtener_usuario_actual()
     if not usuario:
         return None
     
-    # Verificar si ya existe
     response = supabase.table("lista_precios").select("*").eq("producto_id", producto_id).eq("usuario_id", usuario['id']).execute()
     
     datos = {
@@ -926,13 +976,14 @@ def guardar_precio(producto_id, margen_teorico, precio_final):
     }
     
     if response.data and len(response.data) > 0:
-        # Actualizar
-        return supabase.table("lista_precios").update(datos).eq("producto_id", producto_id).eq("usuario_id", usuario['id']).execute().data
+        result = supabase.table("lista_precios").update(datos).eq("producto_id", producto_id).eq("usuario_id", usuario['id']).execute().data
     else:
-        # Crear
         datos['producto_id'] = producto_id
         datos['usuario_id'] = usuario['id']
-        return supabase.table("lista_precios").insert(datos).execute().data
+        result = supabase.table("lista_precios").insert(datos).execute().data
+    
+    limpiar_cache_precios()
+    return result
 
 # --- CLIENTES ---
 def buscar_cliente_por_dni(dni):
