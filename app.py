@@ -322,7 +322,7 @@ def obtener_lista_precios():
     if productos.empty:
         return pd.DataFrame()
     
-    precios_data = supabase.table("precios").select("*").eq("usuario_id", usuario['id']).execute()
+    precios_data = supabase.table("lista_precios").select("*").eq("usuario_id", usuario['id']).execute()
     precios_dict = {p['producto_id']: p for p in precios_data.data} if precios_data.data else {}
     
     lista = []
